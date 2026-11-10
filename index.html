@@ -602,13 +602,14 @@ window.addEventListener('beforeunload', (e) => { if (S.dirty) { e.preventDefault
 
 /* ================= DÉMARRAGE ================= */
 grist.ready({ requiredAccess: 'full' });
-let first = true;
+// Identité et tables chargées dès l'ouverture, sans attendre qu'un dossier soit sélectionné.
+let firstRec;           // dossier reçu avant la fin de l'initialisation
+const init = (async () => { await discover(); await loadPeople(); S.ready = true; S.rec = firstRec && firstRec.id ? firstRec : null; await loadData(); refresh(); })();
 grist.onRecord(async (rec) => {
-  if (first) { first = false; await discover(); await loadPeople(); S.ready = true; S.rec = rec && rec.id ? rec : null; await loadData(); refresh(); return; }
+  if (!S.ready) { firstRec = rec; await init; return; }
   onDossier(rec);
 }, { includeColumns: 'all' });
 grist.onRecords(() => {}); // nécessaire pour recevoir les changements de sélection dans certaines versions de Grist
-setTimeout(() => { if (first) { overlay('<h2>Aucun dossier sélectionné</h2><p>Dans Grist, réglez ce widget sur la table <b>Dossiers</b> et choisissez « Sélectionner par » le widget de suivi.</p>'); } }, 8000);
 renderAll();
 startOffice();
 // Recharge régulièrement versions et remarques (travail à plusieurs).
