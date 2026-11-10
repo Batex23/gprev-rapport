@@ -2,7 +2,7 @@
 // Partie « LibreOffice » du widget Rapport. Ce script tourne dans le thread de ZetaOffice
 // et pilote Writer via l'API UNO. Il reçoit des commandes de la page (index.html).
 'use strict';
-let zetajs, css, ctx, desktop, xModel = null;
+let zetajs, css, ctx, desktop, xModel = null, repaired = false;
 
 const prop = (Name, Value) => new css.beans.PropertyValue({ Name, Value });
 const reply = (d, extra) => zetajs.mainPort.postMessage({ cmd: 'ok', id: d.id, ...extra });
@@ -27,6 +27,13 @@ function open(d) {
   closeDoc();
   const args = [prop('ReadOnly', !!d.readOnly)];
   xModel = desktop.loadComponentFromURL('file://' + d.path, '_default', 0, args);
+  repaired = false;
+  if (!xModel) {
+    // Fichier endommagé (archive .odt mal fermée…) : LibreOffice tente de le réparer.
+    xModel = desktop.loadComponentFromURL('file://' + d.path, '_default', 0, args.concat([prop('RepairPackage', true)]));
+    repaired = !!xModel;
+  }
+  if (!xModel) throw new Error('LibreOffice n’a pas pu lire ce fichier, même en mode réparation. Ouvrez-le dans OpenOffice, faites « Enregistrer sous… » au format .odt, puis importez le nouveau fichier.');
   const frame = xModel.getCurrentController().getFrame();
   frame.getContainerWindow().FullScreen = true;
   const disp = css.frame.DispatchHelper.create(ctx);
@@ -81,7 +88,7 @@ function nbModifsSuivies() {
 function handle(d) {
   switch (d.cmd) {
     case 'user': setUser(d.prenom, d.nom); return reply(d);
-    case 'open': open(d); return reply(d);
+    case 'open': open(d); return reply(d, { repaired });
     case 'close': closeDoc(); return reply(d);
     case 'modified': return reply(d, { modified: !!(xModel && xModel.isModified()) });
     case 'track':

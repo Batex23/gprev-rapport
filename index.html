@@ -376,9 +376,10 @@ function renderPane() {
   else p.innerHTML = renderStats();
 }
 function renderVersions() {
-  if (!S.versions.length) return '<div class="empty">Aucune version enregistrée pour ce dossier.</div>';
+  const imp = S.rec && canEdit(S.rec, actor()) ? '<button class="btn sm" data-a="imp" style="margin-bottom:10px" title="Ajoute un fichier .odt comme nouvelle version (par exemple pour remplacer un fichier endommagé)">Importer un .odt comme nouvelle version…</button>' : '';
+  if (!S.versions.length) return imp + '<div class="empty">Aucune version enregistrée pour ce dossier.</div>';
   const cur = S.view && S.view.versionId, last = S.versions[0];
-  return S.versions.map((v, i) => {
+  return imp + S.versions.map((v, i) => {
     const prev = S.versions[i + 1];
     const actuelle = v.id == last.id;
     return `<div class="ver ${v.id == cur ? 'cur' : ''}">
@@ -459,7 +460,8 @@ async function openVersion(v, mode, compareTo) {
     let editPath = path;
     if (mode == 'edit') { editPath = writeFS('edition_' + S.rec.id + '.odt', FS.readFile(path)); S.track = isRelecteur(S.rec, actor()); }
     const cmpPath = compareTo ? await fileOf(compareTo) : null;
-    await lo('open', { path: editPath, readOnly: mode != 'edit', track: mode == 'edit' && S.track, compareWith: cmpPath });
+    const ores = await lo('open', { path: editPath, readOnly: mode != 'edit', track: mode == 'edit' && S.track, compareWith: cmpPath });
+    if (ores.repaired) setTimeout(() => toast(mode == 'edit' ? 'Fichier endommagé réparé automatiquement. Cliquez sur « Enregistrer la version » pour garder la version réparée.' : 'Fichier endommagé réparé automatiquement pour l’affichage.', false), 1200);
     S.view = { mode: cmpPath ? 'cmp' : mode, versionId: v.id, compareId: compareTo ? compareTo.id : null };
     S.file = fname([S.rec.Ville, S.rec.Etablissement].filter(Boolean).join('_')) + '_v' + v.Numero;
     setDirty(false);
@@ -472,7 +474,8 @@ async function openVersion(v, mode, compareTo) {
       else hideBar();
     } else hideBar();
   } catch (e) {
-    console.error(e); overlay('<h2>Impossible d’ouvrir le rapport</h2><p>' + esc(e.message || e) + '</p>');
+    console.error(e); overlay('<h2>Impossible d’ouvrir le rapport</h2><p>' + esc(e.message || e) + '</p>' + (canEdit(S.rec, actor()) ? '<button class="btn p" id="bImport2">Importer un autre .odt…</button>' : ''));
+    if ($('bImport2')) $('bImport2').onclick = importModele;
     S.view = null;
   }
   S.busy = false; renderAll();
@@ -485,7 +488,7 @@ function importModele() {
     S.busy = true; overlay('<div class="spin"></div><h2>Import du modèle…</h2>');
     try {
       const bytes = new Uint8Array(await f.arrayBuffer());
-      await newVersion(bytes, [], 0, 'Modèle Prevarisc importé');
+      await newVersion(bytes, [], 0, S.versions.length ? 'Fichier .odt importé' : 'Modèle Prevarisc importé');
       await openCurrent();
     } catch (e) { console.error(e); toast('Import impossible : ' + (e.message || e), true); S.busy = false; openCurrent(); }
   };
@@ -615,7 +618,8 @@ $('pane').addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-a]'); if (!b || S.busy) return;
   if (await checkDirty()) { toast('Enregistrez d’abord vos modifications (ou utilisez « Comparer » après avoir enregistré).', true); return; }
   const v = versionById(+b.dataset.v);
-  if (b.dataset.a == 'cur') openCurrent();
+  if (b.dataset.a == 'imp') importModele();
+  else if (b.dataset.a == 'cur') openCurrent();
   else if (b.dataset.a == 'see') openVersion(v, 'ro');
   else if (b.dataset.a == 'cmp') openVersion(v, 'ro', versionById(+b.dataset.p));
 });
