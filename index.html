@@ -8,6 +8,11 @@
 // LibreOffice a besoin d'une page « isolée ». Sur GitHub Pages, c'est le service worker
 // isolation-sw.js qui ajoute les en-têtes ; au tout premier chargement, on recharge une fois.
 // Un rechargement forcé (Ctrl+F5) contourne le service worker : on recharge alors normalement.
+// Deux modes :
+//  - « vue » : la page est dans Grist (cadre). Elle sert de lanceur et relaie les données vers l'onglet.
+//  - « onglet » (?onglet=<session>) : l'éditeur plein écran, ouvert depuis la vue.
+var PARAMS = new URLSearchParams(location.search);
+var TAB = PARAMS.get('onglet');
 (function () {
   var k = 'rapport-iso-reload';
   if (window.crossOriginIsolated) { try { sessionStorage.removeItem(k); } catch (e) {} return; }
@@ -15,11 +20,15 @@
   navigator.serviceWorker.register('isolation-sw.js').then(function () { return navigator.serviceWorker.ready; }).then(function () {
     var n = 0;
     try { n = +sessionStorage.getItem(k) || 0; sessionStorage.setItem(k, n + 1); } catch (e) {}
-    if (n < 3) location.reload();
+    if (n >= 4) return;
+    // Firefox (onglet) : l'isolation demande en plus l'en-tête COOP, ajouté quand l'adresse contient coop=1.
+    if (TAB && navigator.serviceWorker.controller && !PARAMS.has('coop')) { PARAMS.set('coop', '1'); location.replace(location.pathname + '?' + PARAMS + location.hash); return; }
+    location.reload();
   }).catch(function (e) { console.warn('Service worker indisponible', e); window.__swErr = String(e && e.message || e); });
 })();
+// Dans l'onglet, pas d'API Grist directe : un relais remplace « grist » plus bas.
+if (!TAB) document.write('<script src="https://docs.getgrist.com/grist-plugin-api.js"><\/script>');
 </script>
-<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
 <style>
 :root{
   color-scheme:light dark;
@@ -135,6 +144,82 @@ table.st th{color:var(--mut);font-weight:600;vertical-align:bottom}
 
 <script>
 'use strict';
+/* ================= RELAIS VUE GRIST ⇄ ONGLET ================= */
+// Chrome / Edge : l'onglet garde le lien avec la vue (window.opener) et lui envoie ses demandes.
+// Firefox : l'onglet est isolé et perd ce lien ; on passe par un BroadcastChannel (même site github.io).
+const CHAN = (sess) => 'gprev-rapport-' + sess;
+if (TAB) {
+  const chan = ('BroadcastChannel' in window) ? new BroadcastChannel(CHAN(TAB)) : null;
+  const pend = {}; let n = 0, recCb = null, gotRec = false, lastSeen = 0;
+  const send = (m) => {
+    m.t = TAB;
+    try { if (window.opener && !window.opener.closed) window.opener.postMessage(m, location.origin); } catch (e) {}
+    if (chan) chan.postMessage(m);
+  };
+  const recv = (d) => {
+    if (!d || d.t !== TAB || d.fromTab) return;
+    lastSeen = Date.now();
+    if (d.ev === 'record') { gotRec = true; if (d.as != null) window.__asFromView = d.as; if (recCb) recCb(d.rec); return; }
+    if (d.ev === 'closing') { window.__viewGone = true; return; }
+    if (d.id && pend[d.id]) { const q = pend[d.id]; delete pend[d.id]; d.ok ? q.res(d.r) : q.rej(new Error(d.err)); }
+  };
+  window.addEventListener('message', (e) => { if (e.origin === location.origin) recv(e.data); });
+  if (chan) chan.onmessage = (e) => recv(e.data);
+  const rpc = (m, a) => new Promise((res, rej) => {
+    const id = 'r' + (++n); pend[id] = { res, rej }; send({ fromTab: 1, id, m, a });
+    setTimeout(() => { if (pend[id]) { delete pend[id]; rej(new Error('Pas de réponse de Grist. Gardez l’onglet Grist ouvert, ou rouvrez le rapport depuis Grist.')); } }, 60000);
+  });
+  window.grist = {
+    ready() {}, onRecords() {},
+    onRecord(cb) {
+      recCb = cb;
+      const hello = () => { if (gotRec) return; send({ fromTab: 1, hello: 1 }); setTimeout(hello, 1000); };
+      hello();
+      setTimeout(() => { if (!gotRec) showBar('Cet onglet n’arrive pas à joindre Grist. Fermez-le et rouvrez le rapport depuis la vue Rapport de Grist.'); }, 12000);
+    },
+    docApi: {
+      fetchTable: (...a) => rpc('fetchTable', a), listTables: (...a) => rpc('listTables', a),
+      applyUserActions: (...a) => rpc('applyUserActions', a), getAccessToken: (...a) => rpc('getAccessToken', a),
+    },
+  };
+}
+// Côté vue (dans Grist) : ouvre l'onglet et exécute ses demandes avec la vraie API Grist.
+const TABLINK = { win: null, sess: null, chan: null, reply: null };
+function tabAlive() { return !!TABLINK.sess && (Date.now() - (TABLINK.seen || 0) < 30000); }
+async function onTabMsg(d, reply) {
+  if (!d || !d.fromTab || d.t !== TABLINK.sess) return;
+  TABLINK.reply = reply; TABLINK.seen = Date.now();
+  if (d.hello) { reply({ t: TABLINK.sess, ev: 'record', rec: S.rec, as: S.as }); renderLauncher(); return; }
+  if (d.ping) { reply({ t: TABLINK.sess, pong: 1 }); return; }
+  if (!d.m) return;
+  try { const r = await grist.docApi[d.m](...(d.a || [])); reply({ t: TABLINK.sess, id: d.id, ok: true, r }); }
+  catch (e) { reply({ t: TABLINK.sess, id: d.id, ok: false, err: String((e && e.message) || e) }); }
+}
+function openTab() {
+  if (TABLINK.win && !TABLINK.win.closed && tabAlive()) { try { TABLINK.win.focus(); } catch (e) {} sendRecordToTab(); return; }
+  const sess = Math.random().toString(36).slice(2, 10);
+  TABLINK.sess = sess; TABLINK.seen = Date.now();
+  const url = new URL('index.html', location.href); url.searchParams.set('onglet', sess);
+  TABLINK.win = window.open(url.href, 'gprev-rapport');
+  if (!TABLINK.win) { toast('Le navigateur a bloqué l’ouverture de l’onglet : autorisez les fenêtres surgissantes pour Grist.', true); return; }
+  const mkChan = () => {
+    if (!('BroadcastChannel' in window)) return;
+    try { if (TABLINK.chan) TABLINK.chan.close(); } catch (e) {}
+    TABLINK.chan = new BroadcastChannel(CHAN(sess));
+    TABLINK.chan.onmessage = (e) => onTabMsg(e.data, (m) => TABLINK.chan.postMessage(m));
+  };
+  // Firefox cloisonne le stockage des cadres : on demande l'accès au stockage du site pour joindre l'onglet.
+  if (/Firefox\//.test(navigator.userAgent) && document.requestStorageAccess) {
+    document.requestStorageAccess().then(mkChan, () => { mkChan(); toast('Firefox a refusé l’accès : l’onglet risque de ne pas joindre Grist.', true); });
+  } else mkChan();
+  renderLauncher();
+}
+function sendRecordToTab() { if (TABLINK.reply && tabAlive()) TABLINK.reply({ t: TABLINK.sess, ev: 'record', rec: S.rec, as: S.as }); }
+if (!TAB) window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin || !TABLINK.win || e.source !== TABLINK.win) return;
+  onTabMsg(e.data, (m) => { try { TABLINK.win.postMessage(m, location.origin); } catch (er) {} });
+});
+
 /* ================= CONFIGURATION ================= */
 const SOFFICE = 'https://cdn.zetaoffice.net/zetaoffice_latest/';   // binaires LibreOffice (WebAssembly)
 const T = { D: 'Dossiers', P: 'Personnel_du_GPREV', I: 'Identite', V: 'Rapports_Versions', R: 'Rapports_Remarques', F: 'Rapports_Fichiers' };
@@ -312,7 +397,7 @@ async function loadPeople() {
   S.pers = o;
   let ident = [];
   try { ident = rowsOf(await grist.docApi.fetchTable(T.I)); } catch (e) {}
-  if (ident.length > 1) { S.owner = true; try { S.as = +localStorage.getItem('rapport_as') || 0; } catch (e) {} }
+  if (ident.length > 1) { S.owner = true; try { S.as = +localStorage.getItem('rapport_as') || 0; } catch (e) {} if (TAB && window.__asFromView != null) S.as = +window.__asFromView || 0; }
   else if (ident.length == 1) S.me = S.pers[refId(ident[0].Personnel)] || null;
 }
 async function loadData() {
@@ -337,6 +422,7 @@ function renderHeader() {
   if (!r) { $('tNom').textContent = 'Rapport'; $('tSub').textContent = 'Sélectionnez un dossier dans le suivi.'; $('tMode').hidden = true; }
   else {
     $('tNom').textContent = [r.Ville, r.Etablissement].filter(Boolean).join(' – ') || ('Dossier ' + r.id);
+    if (TAB) document.title = 'Rapport – ' + $('tNom').textContent;
     const lien = r.Lien_Prevarisc ? ` · <a href="${esc(r.Lien_Prevarisc)}" target="_blank" rel="noopener">Prevarisc ↗</a>` : '';
     $('tSub').innerHTML = esc([r.Numero_Urbanisme, r.Statut, r.Agent_Assigne ? 'Agent : ' + nomDe(refId(r.Agent_Assigne)) : ''].filter(Boolean).join(' · ')) + lien;
   }
@@ -432,6 +518,29 @@ function renderStats() {
 }
 function renderAll() { renderHeader(); renderPane(); }
 
+/* ================= LANCEUR (vue dans Grist) ================= */
+function renderLauncher() {
+  if (TAB || S.officeStarted) return;
+  const r = S.rec;
+  if (!S.ready) return;
+  if (S.tablesOk === false) return;
+  if (!r) { overlay('<h2>Aucun dossier sélectionné</h2><p>Choisissez un dossier dans le widget de suivi.</p>'); return; }
+  const open = tabAlive() && TABLINK.win && !TABLINK.win.closed;
+  const can = canEdit(r, actor());
+  if (!S.versions.length) {
+    overlay(`<h2>Pas encore de rapport pour ce dossier</h2><p>Il sera importé au moment de l’<b>envoi en relecture</b>, ou maintenant :</p>${can ? '<button class="btn p" id="bImport">Importer le modèle .odt…</button>' : ''}`);
+    if (can) $('bImport').onclick = importModele; return;
+  }
+  const v = S.versions[0];
+  overlay(`<h2>${esc([r.Ville, r.Etablissement].filter(Boolean).join(' – ') || 'Rapport')}</h2>
+    <p>Version ${v.Numero} · ${esc(v.Etape || '')} · ${esc(nomDe(refId(v.Auteur)))} · ${fdate(v.Date)}</p>
+    ${open ? '<p><b>Le rapport est ouvert dans un autre onglet.</b> Il suit le dossier sélectionné ici. Gardez cet onglet Grist ouvert pendant que vous travaillez.</p>' : ''}
+    <button class="btn p" id="bTab" style="font-size:15px;padding:10px 18px">${open ? 'Afficher l’onglet du rapport' : 'Ouvrir le rapport ↗'}</button>
+    <button class="btn" id="bHere" title="Ouvre l’éditeur dans ce cadre (Chrome ou Edge)">Éditer ici</button>`);
+  $('bTab').onclick = openTab;
+  $('bHere').onclick = () => { S.officeStarted = true; overlay('<div class="spin"></div><h2>Chargement de l’éditeur…</h2>'); startOffice(); };
+}
+
 /* ================= OUVERTURE DES DOCUMENTS ================= */
 function versionById(id) { return S.versions.find((v) => v.id == id); }
 async function fileOf(v) {
@@ -440,6 +549,7 @@ async function fileOf(v) {
   return writeFS(name, await loadFile(v));
 }
 async function openCurrent() {
+  if (!S.officeReady) { renderLauncher(); renderAll(); return; }
   const r = S.rec, a = actor();
   if (!r) { await lo('close').catch(() => {}); S.view = null; overlay('<h2>Aucun dossier sélectionné</h2><p>Choisissez un dossier dans le widget de suivi : son rapport s’ouvrira ici.</p>'); renderAll(); return; }
   if (!S.versions.length) {
@@ -595,7 +705,8 @@ async function switchTo(rec) {
   S.pendingRec = undefined; hideBar(); setDirty(false);
   S.rec = rec && rec.id ? rec : null;
   await loadData(); renderAll();
-  if (S.officeReady && S.tablesOk) openCurrent();
+  sendRecordToTab();
+  if (S.officeReady && S.tablesOk) openCurrent(); else renderLauncher();
 }
 function refresh() {
   renderAll();
@@ -604,7 +715,7 @@ function refresh() {
     overlay('<h2>Tables du rapport absentes</h2><p>Le widget a besoin de trois tables : <b>' + T.V + '</b> (versions), <b>' + T.R + '</b> (remarques) et <b>' + T.F + '</b> (fichiers). Les tables déjà présentes sont conservées.</p><button class="btn p" id="bMk">Créer les tables</button>');
     $('bMk').onclick = createTables; return;
   }
-  if (S.officeReady) applyUser().then(openCurrent);
+  if (S.officeReady) applyUser().then(openCurrent); else renderLauncher();
 }
 
 /* ================= ÉVÉNEMENTS ================= */
@@ -618,6 +729,7 @@ $('pane').addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-a]'); if (!b || S.busy) return;
   if (await checkDirty()) { toast('Enregistrez d’abord vos modifications (ou utilisez « Comparer » après avoir enregistré).', true); return; }
   const v = versionById(+b.dataset.v);
+  if (b.dataset.a != 'imp' && !S.officeReady) { openTab(); return; }
   if (b.dataset.a == 'imp') importModele();
   else if (b.dataset.a == 'cur') openCurrent();
   else if (b.dataset.a == 'see') openVersion(v, 'ro');
@@ -645,14 +757,21 @@ const init = (async () => {
   }
   await discover(); await loadPeople(); S.ready = true; S.rec = firstRec && firstRec.id ? firstRec : null; await loadData(); refresh(); })();
 grist.onRecord(async (rec) => {
+  if (TAB && S.owner && window.__asFromView != null && S.as !== +window.__asFromView) { S.as = +window.__asFromView; applyUser(); }
   if (!S.ready) { firstRec = rec; await init; return; }
   onDossier(rec);
 }, { includeColumns: 'all' });
 grist.onRecords(() => {}); // nécessaire pour recevoir les changements de sélection dans certaines versions de Grist
 renderAll();
-startOffice();
+if (TAB) {
+  S.officeStarted = true; startOffice();
+  document.title = 'Rapport GPREV';
+  // Avertit si la vue Grist n'est plus joignable (page Grist fermée ou rechargée).
+} else {
+  window.addEventListener('pagehide', () => { if (TABLINK.reply) TABLINK.reply({ t: TABLINK.sess, ev: 'closing' }); });
+}
 // Recharge régulièrement versions et remarques (travail à plusieurs).
-setInterval(async () => { if (document.hidden || !S.rec || S.busy) return; const n = S.versions.length; await loadData(); if (S.versions.length != n) { if (!S.view && S.officeReady) openCurrent(); else if (S.view.mode != 'edit') toast('Nouvelle version enregistrée par un collègue'); } renderPane(); }, 15000);
+setInterval(async () => { if (document.hidden || !S.rec || S.busy) return; const n = S.versions.length; await loadData(); if (S.versions.length != n) { if (!S.view) openCurrent(); else if (S.view.mode != 'edit') toast('Nouvelle version enregistrée par un collègue'); } renderPane(); }, 15000);
 </script>
 </body>
 </html>

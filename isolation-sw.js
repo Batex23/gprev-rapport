@@ -12,9 +12,11 @@ self.addEventListener('fetch', (e) => {
     const h = new Headers(res.headers);
     // Chrome / Edge : isolation possible même à l'intérieur d'un cadre (cas de Grist).
     h.set('Document-Isolation-Policy', 'isolate-and-credentialless');
-    // Navigateurs qui ouvrent le widget dans un onglet à part.
     h.set('Cross-Origin-Embedder-Policy', 'credentialless');
-    h.set('Cross-Origin-Opener-Policy', 'same-origin');
+    // COOP isole aussi la page sous Firefox, mais coupe le lien avec la vue Grist qui a ouvert l'onglet.
+    // On ne l'ajoute donc à l'onglet que s'il le demande (coop=1), c'est-à-dire sous Firefox.
+    const u = new URL(r.url);
+    if (!u.searchParams.has('onglet') || u.searchParams.has('coop')) h.set('Cross-Origin-Opener-Policy', 'same-origin');
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
   }).catch(() => fetch(r)));
 });
