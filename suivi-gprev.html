@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Suivi GPREV</title>
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+:root{
+  color-scheme:light dark;
+  --bg:#edf0f5;--card:#fff;--soft:#f3f5f9;--ink:#14223a;--mut:#5a687d;--line:#d9dfe8;
+  --acc:#234f8e;--acc-ink:#fff;--on:#fff;--bad:#b3261e;--ok:#1d7a52;
+  --saf:#5a6b8f;--svc:#2f64a3;--att:#1f7f8c;--cours:#1d7a52;--pieces:#b77a0c;--reprise:#c24a26;
+  --relcs:#7650a6;--relcg:#55398a;--retour:#4d7d95;--clos:#7b848d;--late:#b3261e;--soon:#b36b00;
+  --font:Bahnschrift,"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1620;--card:#172130;--soft:#1d293a;--ink:#e6edf6;--mut:#93a2b8;--line:#2a384c;
+  --acc:#5b9bf0;--acc-ink:#0b1626;--on:#0e1520;--bad:#ff8a80;--ok:#6fd0a2;
+  --saf:#9fb0d4;--svc:#7db0ec;--att:#6fcad6;--cours:#6fd0a2;--pieces:#f0bd55;--reprise:#f08a67;
+  --relcs:#bb9be6;--relcg:#a38be0;--retour:#8ec3dc;--clos:#a9b2bb;--late:#ff8a80;--soon:#ffc266;
+}}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font:14px/1.45 var(--font);background:var(--bg);color:var(--ink);display:flex;flex-direction:column;overflow:hidden}
+button,select,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+[hidden]{display:none!important}
+
+/* en-tête */
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 18px;background:var(--card);border-bottom:1px solid var(--line);flex:none}
+.brand{display:flex;align-items:center;gap:11px;min-width:0}
+.brand b{font-size:17px;font-weight:700}
+.brand small{color:var(--mut);font-size:13px}
+.who{display:flex;align-items:center;gap:10px;min-width:0}
+.who .nm{line-height:1.2;text-align:right;min-width:0}
+.who .nm b{display:block;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.who .nm small{color:var(--mut);font-size:12px}
+.asel{border:1px solid var(--line);background:var(--soft);border-radius:999px;padding:7px 14px;max-width:270px;cursor:pointer}
+.av{width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;font-size:11px;font-weight:700;color:#fff;flex:none}
+.sim{background:color-mix(in srgb,var(--soon) 15%,var(--card));border-bottom:1px solid color-mix(in srgb,var(--soon) 40%,var(--line));padding:6px 18px;font-size:13px;flex:none}
+
+/* champ de bulles */
+.field{display:flex;gap:6px;align-items:flex-start;padding:12px 18px 4px;background:var(--card);overflow-x:auto;flex:none}
+.sep{width:1px;align-self:stretch;background:var(--line);margin:8px 10px 24px;flex:none}
+.pipe{display:flex;gap:2px;position:relative}
+.pipe::before{content:"";position:absolute;left:30px;right:30px;top:59px;border-top:2px dotted var(--line)}
+.bub{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;width:max(108px,calc(var(--d) + 14px));flex:none;position:relative;text-align:center;padding-bottom:6px;border-radius:14px}
+.bub .wrap{height:118px;width:100%;display:grid;place-items:center;position:relative}
+.bub .disc{width:var(--d);height:var(--d);border-radius:50%;display:grid;place-items:center;position:relative;color:var(--c);
+  background:color-mix(in srgb,var(--c) 13%,var(--card));border:2px solid color-mix(in srgb,var(--c) 55%,var(--card));transition:transform .18s,background .18s,box-shadow .18s}
+.bub .disc b{font-size:calc(var(--d) * .38);font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.bub:hover .disc{transform:scale(1.05)}
+.bub[aria-pressed=true] .disc{background:var(--c);border-color:var(--c);color:var(--on);box-shadow:0 8px 20px color-mix(in srgb,var(--c) 38%,transparent)}
+.bub.zero .disc{opacity:.45}
+.bub:focus-visible .disc{outline:3px solid var(--acc);outline-offset:3px}
+.bub .lbl{font-size:12.5px;line-height:1.2;font-weight:600;max-width:100px}
+.bub .lt,.sb .lt{position:absolute;top:-5px;right:-5px;min-width:22px;height:22px;border-radius:11px;background:var(--late);color:var(--on);font:700 12px/22px var(--font);text-align:center;padding:0 5px;border:2px solid var(--card);font-style:normal}
+.bub.bump .disc{animation:bump .5s ease}
+@keyframes bump{40%{transform:scale(1.14)}}
+.intro .bub{animation:pop .5s cubic-bezier(.2,.9,.3,1.3) backwards;animation-delay:calc(var(--i) * 55ms)}
+@keyframes pop{from{transform:scale(.4);opacity:0}}
+[data-k=saf]{--c:var(--saf)}[data-k=svc]{--c:var(--svc)}[data-k=att]{--c:var(--att)}[data-k=cours]{--c:var(--cours)}
+[data-k=pieces]{--c:var(--pieces)}[data-k=reprise]{--c:var(--reprise)}[data-k=relcs]{--c:var(--relcs)}[data-k=relcg]{--c:var(--relcg)}
+[data-k=retour]{--c:var(--retour)}[data-k=clos]{--c:var(--clos)}[data-k=late]{--c:var(--late)}[data-k=soon]{--c:var(--soon)}
+
+.sub{display:flex;gap:10px;align-items:center;flex-wrap:nowrap;overflow-x:auto;padding:8px 18px 12px;background:var(--card);border-bottom:1px solid var(--line);flex:none}
+.sub .sl{color:var(--mut);font-size:12.5px;margin-right:4px;flex:none;white-space:nowrap}
+.sb{all:unset;box-sizing:border-box;flex:none;cursor:pointer;display:inline-flex;align-items:center;gap:7px;padding:4px 12px 4px 4px;border-radius:999px;border:1px solid var(--line);background:var(--soft);font-size:13px;font-weight:600;position:relative}
+.sb .tot{color:var(--mut);font-weight:500;font-size:12px;margin-left:-3px}
+.sb[aria-pressed=true] .tot{color:inherit;opacity:.8}
+.itab .num{text-align:right;white-space:nowrap}
+.dh{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}.dh h2{margin:0;font-size:20px}
+.dh select{width:auto;border:1px solid var(--line);border-radius:10px;padding:6px 10px;background:var(--soft);color:var(--ink)}
+.kp{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:14px}
+.kp div{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 14px}.kp b{display:block;font-size:26px;line-height:1.1}.kp span{color:var(--mut);font-size:12.5px}
+.dg{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.dc{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;min-width:0}.dc h3{margin:0 0 8px;font-size:14px}.dc.w{grid-column:1/-1}
+.br{display:grid;grid-template-columns:minmax(90px,38%) 1fr 34px;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;cursor:default}
+.br[data-who]{cursor:pointer}.br[data-who]:hover .bl{color:var(--acc)}.br.on .bl{font-weight:700;color:var(--acc)}
+.bl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bt{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--soft)}.bt i{display:block;height:100%}.br b{text-align:right}
+.lg{display:flex;gap:12px;font-size:12px;color:var(--mut);margin:0 0 6px}.lg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px}
+.mo{display:flex;gap:6px;align-items:flex-end;height:130px}.mo div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;font-size:11.5px;color:var(--mut);gap:3px}.mo i{width:100%;background:var(--acc);border-radius:5px 5px 0 0;min-height:2px}.mo em{font-style:normal;color:var(--ink);font-weight:600}
+.cnts{display:flex;gap:14px;flex-wrap:wrap}.cnt{display:flex;align-items:center;gap:8px;background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:6px 10px}.cnt span{color:var(--mut);font-size:12.5px}.cnt b{font-size:18px;min-width:20px;text-align:center}.cnt .btn{padding:3px 10px}
+[data-k=sclate]{--c:var(--reprise)}[data-k=sc]{--c:var(--svc)}
+.dashfull .list{display:none}.dashfull .cols{grid-template-columns:1fr}.itab tr.on td{background:color-mix(in srgb,var(--acc) 12%,var(--card))}
+.mo i{min-width:0}
+.mv{cursor:pointer;color:var(--mut);font-size:11px;padding:0 2px;user-select:none}.mv:hover{color:var(--acc)}.ordc{white-space:nowrap}tr[draggable=true]{cursor:grab!important}.itab tr.ovr td{background:color-mix(in srgb,var(--acc) 18%,var(--card));box-shadow:inset 0 2px 0 var(--acc)}
+.more{display:block;margin:10px auto}
+.sb:hover{border-color:var(--acc)}
+.sb b{background:var(--ink);color:var(--card);border-radius:999px;min-width:22px;height:22px;display:inline-grid;place-items:center;font-size:12px;padding:0 6px}
+.sb[aria-pressed=true]{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
+.sb[aria-pressed=true] b{background:var(--acc-ink);color:var(--acc)}
+.sb .lt{top:-6px;right:-4px;min-width:18px;height:18px;line-height:18px;font-size:11px}
+
+/* colonnes */
+.cols{flex:1;display:grid;grid-template-columns:minmax(300px,410px) 1fr;min-height:0}
+.list{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--bg)}
+.tools .btn{flex:1;justify-content:center}
+.tools{padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line);background:var(--card)}
+.tools input[type=search]{flex:1 1 100%;min-width:140px;border:1px solid var(--line);background:var(--soft);border-radius:10px;padding:7px 11px}
+.cards{overflow:auto;flex:1;padding:10px;display:flex;flex-direction:column;gap:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.card:hover{border-color:color-mix(in srgb,var(--acc) 55%,var(--line))}
+.card.sel{border-color:var(--acc);box-shadow:0 0 0 2px color-mix(in srgb,var(--acc) 30%,transparent)}
+.card.flash{animation:fl 3.2s ease-out}
+@keyframes fl{0%{background:color-mix(in srgb,var(--soon) 30%,var(--card))}100%{background:var(--card)}}
+.c-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.c-name{font-weight:650;font-size:13.5px;overflow-wrap:anywhere}
+.c-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;align-items:center;font-size:12px;color:var(--mut)}
+.pas{font-weight:700;font-size:12px;padding:2px 9px;border-radius:999px;white-space:nowrap;border:1px solid transparent}
+.pas.ok{background:color-mix(in srgb,var(--ok) 14%,var(--card));color:var(--ok)}
+.pas.soon{background:color-mix(in srgb,var(--soon) 16%,var(--card));color:var(--soon)}
+.pas.bad{background:var(--late);color:var(--on)}
+.pas.na{background:var(--soft);color:var(--mut)}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-weight:600;font-size:12px;color:var(--c,var(--mut));background:color-mix(in srgb,var(--c,var(--mut)) 13%,var(--card))}
+.chip{display:inline-flex;align-items:center;gap:5px}
+.chip .av{width:20px;height:20px;font-size:9px}
+.mini{padding:1px 8px;border-radius:999px;background:var(--soft);border:1px solid var(--line);font-size:11.5px;font-weight:600;color:var(--ink)}
+.mini.hot{background:color-mix(in srgb,var(--reprise) 14%,var(--card));border-color:color-mix(in srgb,var(--reprise) 45%,var(--line));color:var(--reprise)}
+.empty{color:var(--mut);text-align:center;padding:36px 16px}
+
+/* détail */
+.detail{overflow:auto;padding:18px 22px 40px;min-width:0}
+.sheet{max-width:960px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px}
+.box h3{margin:0 0 12px;font-size:13.5px;font-weight:700;color:var(--mut)}
+.head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+.head h2{margin:0 0 8px;font-size:20px;line-height:1.25;overflow-wrap:anywhere}
+.head .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.head a{color:var(--acc);font-weight:600;text-decoration:none}
+.head a:hover{text-decoration:underline}
+.cd{width:84px;height:84px;border-radius:50%;flex:none;display:grid;place-items:center;text-align:center;line-height:1.05;color:var(--c);border:3px solid var(--c);background:color-mix(in srgb,var(--c) 11%,var(--card))}
+.cd b{font-size:26px;display:block;font-variant-numeric:tabular-nums}
+.cd small{font-size:11px;color:var(--mut)}
+.cd.ok{--c:var(--ok)}.cd.soon{--c:var(--soon)}.cd.bad{--c:var(--late)}.cd.na{--c:var(--clos)}
+.track{display:flex;margin:16px 0 2px}
+.tk{flex:1;text-align:center;position:relative;font-size:11.5px;color:var(--mut);padding:0 2px}
+.tk i{display:block;width:14px;height:14px;border-radius:50%;margin:0 auto 6px;background:var(--line);position:relative;z-index:1}
+.tk::before{content:"";position:absolute;top:6px;left:-50%;right:50%;height:2px;background:var(--line)}
+.tk:first-child::before{display:none}
+.tk.done i,.tk.done::before,.tk.cur::before{background:var(--c)}
+.tk.cur i{background:var(--card);border:3px solid var(--c);width:18px;height:18px;margin-top:-2px;margin-bottom:4px}
+.tk.cur{color:var(--ink);font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px 18px}
+.fld{min-width:0}.fld.w{grid-column:span 2}
+.fld>span{display:block;font-size:12px;color:var(--mut);margin-bottom:3px}
+.fld .val{padding:5px 0;font-weight:600;min-height:30px;overflow-wrap:anywhere}
+.fld input,.fld select{width:100%;border:1px solid transparent;border-bottom-color:var(--line);background:transparent;border-radius:8px;padding:5px 8px;margin-left:-8px;width:calc(100% + 8px);font-weight:600}
+.fld input:hover,.fld select:hover{background:var(--soft)}
+.fld input:focus,.fld select:focus{background:var(--card);border-color:var(--acc);outline:none}
+.fld input[type=checkbox]{width:18px;height:18px;margin:6px 0 0}
+.note{color:var(--mut);font-size:12.5px;margin-top:10px}
+.acts{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.acts .grp{display:flex;flex-direction:column;gap:4px}
+.acts label{font-size:12px;color:var(--mut)}
+.acts select,.acts input[type=text],.acts input:not([type]){border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--soft);min-width:170px}
+.box.todo{border-color:color-mix(in srgb,var(--acc) 55%,var(--line));border-left-width:5px}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px 14px;cursor:pointer;font-weight:650;font-size:13px;display:inline-flex;gap:7px;align-items:center}
+.btn:hover{background:var(--soft)}
+.btn.p{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}.btn.p:hover{filter:brightness(1.08)}
+.btn.d{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}
+.btn[disabled]{opacity:.5;cursor:default}
+.btn svg,.ico{width:15px;height:15px;flex:none}
+.load{width:100%;border-radius:12px;overflow:hidden;border:1px solid var(--line);margin-bottom:12px}
+.load table{width:100%;border-collapse:collapse;font-size:13px}
+.load th{font-weight:600;color:var(--mut);background:var(--soft);padding:6px 10px;text-align:center}
+.load td{padding:6px 10px;text-align:center;border-top:1px solid var(--line)}
+.load td:first-child,.load th:first-child{text-align:left}
+.load tr.pick{cursor:pointer}.load tr.pick:hover td{background:var(--soft)}
+.load .n{display:inline-grid;place-items:center;min-width:26px;height:26px;border-radius:13px;background:var(--soft);font-weight:700}
+.load .n.w{background:color-mix(in srgb,var(--soon) 20%,var(--card));color:var(--soon)}
+.cm{padding:9px 12px;border-radius:12px;background:var(--soft);margin-bottom:8px}
+.cm.imp{background:color-mix(in srgb,var(--late) 10%,var(--card));border:1px solid color-mix(in srgb,var(--late) 35%,var(--line))}
+.cm .mh{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--mut);margin-bottom:3px}
+.cm .mh b{color:var(--ink)}
+.cm div:last-child{white-space:pre-wrap;overflow-wrap:anywhere}
+.composer{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.composer textarea,.mbox textarea,.mbox input:not([type=checkbox]),.mbox select{width:100%;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--soft)}
+.composer .bar{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.back{display:none}
+
+/* fenêtres */
+#modal{position:fixed;inset:0;background:rgba(8,14,26,.6);display:none;align-items:center;justify-content:center;padding:14px;z-index:50}
+#modal.on{display:flex}
+.mbox{background:var(--card);border-radius:18px;width:min(1120px,100%);max-height:94vh;overflow:auto;padding:22px}
+.mbox.sm{width:min(620px,100%)}
+.mbox h2{margin:0 0 14px;font-size:19px}
+.mbox .lb{display:block;font-size:12.5px;color:var(--mut);margin:10px 0 3px}
+.mgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:0 14px}
+.mact{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+.drop{border:2px dashed var(--line);border-radius:16px;padding:30px;text-align:center;cursor:pointer;background:var(--soft)}
+.drop:hover,.drop.on{border-color:var(--acc)}
+.sumrow{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 12px}
+.sumrow .pill{font-size:13px;padding:4px 12px}
+.itw{overflow:auto;max-height:52vh;border:1px solid var(--line);border-radius:12px}
+.itab{border-collapse:collapse;width:100%;font-size:12.5px}
+.itab th{position:sticky;top:0;background:var(--soft);text-align:left;padding:7px 8px;font-weight:600;color:var(--mut);white-space:nowrap;z-index:1}
+.itab td{padding:4px 6px;border-top:1px solid var(--line);vertical-align:middle}
+.itab input:not([type=checkbox]),.itab select{width:100%;min-width:90px;border:1px solid var(--line);border-radius:7px;padding:4px 6px;background:var(--card);font-size:12.5px}
+.itab input.warn{border-color:var(--soon);background:color-mix(in srgb,var(--soon) 12%,var(--card))}
+.itab tr.off td{opacity:.45}
+.itab .nmc{font-weight:650;min-width:240px;overflow-wrap:anywhere}
+.itab .fl{color:var(--soon);font-size:12px;font-weight:500;margin-top:2px}
+.itab select{min-width:112px}
+.itab select[data-c=Statut]{min-width:170px}
+.itab .fl.dup{color:var(--mut)}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--card);padding:9px 16px;border-radius:999px;font-weight:600;font-size:13px;z-index:80;max-width:90vw;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.toast.err{background:var(--late);color:var(--on)}
+
+@media (max-width:900px){
+  .cols{grid-template-columns:1fr}
+  .list{border-right:0}
+  body.has-sel .list{display:none}
+  body:not(.has-sel):not(.dash) .detail{display:none}
+  .back{display:inline-flex;margin-bottom:10px}
+  .fld.w{grid-column:span 1}
+  .tk:not(.cur) span{display:none}
+  .mgrid{grid-template-columns:1fr}
+  .who .nm{display:none}
+  .brand small{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <svg width="34" height="30" viewBox="0 0 34 30" aria-hidden="true"><circle cx="11" cy="17" r="10" fill="var(--svc)" opacity=".9"/><circle cx="22" cy="11" r="8" fill="var(--reprise)" opacity=".9"/><circle cx="25" cy="21" r="6" fill="var(--cours)" opacity=".9"/></svg>
+    <div><b>Suivi des dossiers</b> <small>GPREV</small></div>
+  </div>
+  <div class="who" id="who"><span class="nm"><small>Identification…</small></span></div>
+</header>
+<div class="sim" id="simbar" hidden></div>
+<div class="sim" id="warnbar" hidden style="background:color-mix(in srgb,var(--late) 12%,var(--card));border-color:var(--late)"></div>
+<section class="field" id="field" aria-label="Dossiers par étape"></section>
+<section class="sub" id="sub" hidden></section>
+
+<main class="cols">
+  <aside class="list">
+    <div class="tools">
+      <input type="search" id="q" placeholder="Rechercher un dossier" aria-label="Rechercher un dossier">
+      <button class="btn p" id="bNew" hidden></button>
+      <button class="btn" id="bImp" hidden></button>
+      <button class="btn" id="bSC" hidden></button>
+      <button class="btn" id="bStat">Statistiques</button>
+    </div>
+    <div class="cards" id="cards"></div>
+  </aside>
+  <section class="detail" id="detail"></section>
+</main>
+
+<div id="modal"><div class="mbox" id="mbox"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+/* ============ CONSTANTES ============ */
+const T={P:'Personnel_du_GPREV',I:'Identite',C:'Commentaires',S:'Sous_Commissions',D:'Dossiers'};
+const STAGES=[
+ {k:'saf',st:'Reçu SAF',l:'Reçus au SAF'},
+ {k:'svc',st:'Attribué service',l:'À répartir (service)'},
+ {k:'att',st:'En attente agent',l:'En attente agent'},
+ {k:'cours',st:'En cours',l:'En cours'},
+ {k:'pieces',st:'Attente pièces',l:'Attente de pièces'},
+ {k:'reprise',st:'À reprendre',l:'À reprendre'},
+ {k:'relcs',st:'Relecture chef de service',l:'Relecture service'},
+ {k:'relcg',st:'Relecture chef de groupement',l:'Relecture groupement'},
+ {k:'retour',st:'Retour SAF',l:'Retour SAF'},
+ {k:'clos',st:'Clôturé',l:'Clôturés'}];
+const KOF={};STAGES.forEach(s=>KOF[s.st]=s.k);
+const SLAB={};STAGES.forEach(s=>SLAB[s.k]=s.l);SLAB.all='Tous les dossiers en cours';SLAB.late='En retard';SLAB.sc='Dossiers qui passent en sous-commission';SLAB.sclate='En retard avant la sous-commission';SLAB.soon='À échéance sous 7 jours';
+const ACTIVE=['En attente agent','En cours','Attente pièces','À reprendre'];
+const STEPS=[['Reçu','saf'],['Service','svc'],['Agent','att'],['Instruction','cours'],['Relecture service','relcs'],['Relecture groupement','relcg'],['Retour SAF','retour'],['Clôturé','clos']];
+const STEP_OF={'Reçu SAF':0,'Attribué service':1,'En attente agent':2,'En cours':3,'Attente pièces':3,'À reprendre':3,'Relecture chef de service':4,'Relecture chef de groupement':5,'Retour SAF':6,'Clôturé':7};
+const FIELDS=[
+ {k:'Numero_AIRS',l:'N° AIRS (vide = DEMAT)',t:'txt'},
+ {k:'Ville',l:'Ville',t:'txt'},
+ {k:'Etablissement',l:'Établissement / nom du dossier',t:'txt',w:1},
+ {k:'Numero_Urbanisme',l:'N° urbanisme (avec M01 si modificatif)',t:'txt'},
+ {k:'Nature',l:'Nature de l’étude',t:'sel',o:['ERP','Habitation','Code du travail']},
+ {k:'Avec_Habitation',l:'ERP avec habitation',t:'bool'},
+ {k:'Categorie',l:'Catégorie',t:'sel',o:['','1','2','3','4','5','5 < 20']},
+ {k:'Date_Arrivee',l:'Arrivée au SDIS',t:'date'},
+ {k:'Avis',l:'Avis',t:'sel',o:['','Favorable','Défavorable']},
+ {k:'Lien_Prevarisc',l:'Lien Prevarisc',t:'url',w:1}];
+const FD={};FIELDS.forEach(f=>FD[f.k]=f);
+const IDF=['Source','Numero_AIRS','Ville','Etablissement','Numero_Urbanisme','Modificatif','Nature','Avec_Habitation','Categorie','Lien_Prevarisc'];
+const OWNER={id:0,NOM:'Propriétaire',Prenom:'',Grade:'',Service:'Encadrement',Role_hierarchique:1,isOwner:true};
+
+/* ============ ÉTAT ============ */
+const S={repV:{},recs:[],pers:{},scs:{},comsAll:[],me:null,owner:false,as:0,stage:'all',who:null,q:'',sel:null,limit:200,sp:'year',
+  draft:{},prev:{},sig:{},mine:{},flash:{},comSig:'',intro:false,pending:false,ready:false};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm=s=>String(s??'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+const svcN=s=>String(s||'').startsWith('Chargé')?'CM':String(s||'');
+const todayU=()=>{const d=new Date();return Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())/1000};
+const fd=t=>t?new Date(t*1000).toLocaleDateString('fr-FR',{timeZone:'UTC'}):'—';
+const iso=t=>t?new Date(t*1000).toISOString().slice(0,10):'';
+const echOf=r=>{if(r.Date_Arrivee){const sc=r.Sous_Commission&&S.scs[r.Sous_Commission];return calcEch({Date_Arrivee:r.Date_Arrivee,Nature:r.Nature,Avec_Habitation:r.Avec_Habitation,scDate:sc?sc.Date:null})}return r.Echeance||null};
+const jours=r=>{const e=echOf(r);return e?Math.round((e-todayU())/86400):null};
+const DATECOLS=['Date_Arrivee','Date_Attribution_Agent','Date_Termine_Agent','Date_Cloture'];
+function dnum(v){if(v instanceof Date)return isNaN(v)?null:Math.floor(v.getTime()/1000);if(typeof v=='string')return parseDate(v);if(typeof v=='number'&&v>1e11)return Math.floor(v/1000);return v}
+function normDates(r){DATECOLS.concat('Echeance').forEach(c=>{if(c in r)r[c]=dnum(r[c])})}
+const plabel=p=>p?`${p.Grade?p.Grade+' ':''}${p.NOM} ${p.Prenom||''}`.trim():'—';
+const nom=id=>id==0||id==null?(id===0?'Propriétaire':'—'):(S.pers[id]?`${S.pers[id].NOM} ${S.pers[id].Prenom||''}`.trim():'—');
+const ini=p=>((p.Prenom||'')[0]||'')+((p.NOM||'')[0]||'');
+const avatar=p=>`<span class="av" style="background:hsl(${((p.id||0)*47)%360} 36% 40%)">${esc(ini(p).toUpperCase())}</span>`;
+function ico(n){const P={plus:'M12 5v14M5 12h14',up:'M12 16V4m0 0L7 9m5-5 5 5M5 20h14',cal:'M7 3v3m10-3v3M4 9h16M5 5h14a1 1 0 011 1v13a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z',msg:'M4 5h16v11H9l-5 4z',chk:'M5 12l5 5 9-10',back:'M15 5l-7 7 7 7'};return `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${P[n]}"/></svg>`}
+function toast(m,err){const t=$('toast');t.textContent=m;t.className='toast'+(err?' err':'');t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,err?5000:1800)}
+
+/* ============ GRIST ============ */
+const act=(...a)=>grist.docApi.applyUserActions(a);
+function rowsOf(t){const k=Object.keys(t).filter(x=>x!='id');return t.id.map((id,i)=>{const o={id};k.forEach(c=>o[c]=t[c][i]);return o})}
+grist.ready({requiredAccess:'full',allowSelectBy:true});
+grist.onRecords(async rs=>{
+  trackChanges(rs);S.recs=rs;
+  if(!S.ready){S.ready=true;await init()}
+  rs.forEach(normAgent);rs.forEach(normDates);
+  if(!S.first){S.first=true;render()}else renderSoon();
+},{includeColumns:'all'});
+
+let rT=0;const renderSoon=()=>{clearTimeout(rT);rT=setTimeout(render,150)};
+const refId=v=>{if(v==null||typeof v=='number')return v;
+  if(Array.isArray(v)&&v[0]=='R')return +v[2]||0;
+  if(typeof v=='object'){if('rowId' in v)return +v.rowId||0;if('id' in v)return +v.id||0;v=String(v)}
+  if(typeof v=='string'){const m=v.trim().match(/^\w+\[(\d+)\]$/);if(m)return +m[1]}return v};
+function normAgent(r){r.Agent_Assigne=refId(r.Agent_Assigne);r.Sous_Commission=refId(r.Sous_Commission);if(typeof r.Sous_Commission=='string')r.Sous_Commission=0;const v=r.Agent_Assigne;
+  if(typeof v=='string'&&v.trim()){if(/^\d+$/.test(v.trim()))r.Agent_Assigne=+v;else{const p=findAgent(v);r._agentTxt=v;r.Agent_Assigne=p?p.id:0}}}
+const OPTCOLS=['Ordre_SC','Cle_Import','Code_Etab','Type_ERP','Avis_Commission','Objet','Retour_Groupement'];
+const COLTYPE=()=>({Avec_Habitation:'Bool',Pieces_Reseau:'Bool',Retour_Groupement:'Bool',Date_Arrivee:'Date',Date_Attribution_Agent:'Date',Date_Termine_Agent:'Date',Date_Cloture:'Date',Ordre_SC:'Int',Nb_Derogations:'Int',Nb_Demandes_Avis:'Int',Sous_Commission:'Ref:'+T.S,Agent_Assigne:'Ref:'+T.P});
+async function mkCols(){const mc=missingCols().concat(OPTCOLS.filter(c=>!dcols().includes(c))).filter(c=>c!='Nom_Dossier'&&c!='Echeance'),ty=COLTYPE();
+  try{for(const c of mc)await act(['AddColumn',T.D,c,{type:ty[c]||'Text',isFormula:false}]);toast(mc.length+' colonnes créées')}catch(e){toast('Création refusée : '+(e.message||e)+'. Créez-les à la main.',true)}}
+const NEEDED=['Numero_Courrier','Source','Numero_AIRS','Ville','Etablissement','Numero_Urbanisme','Modificatif','Nature','Avec_Habitation','Categorie','Date_Arrivee','Service_Attribue','Agent_Assigne','Statut','Avis','Sous_Commission','Pieces_Reseau','Nb_Derogations','Nb_Demandes_Avis','Lien_Prevarisc','Date_Attribution_Agent','Date_Termine_Agent','Date_Cloture','Nom_Dossier','Echeance'];
+function missingCols(){const c=dcols();return c.length?NEEDED.filter(x=>!c.includes(x)):[]}
+async function fixTypes(){try{for(const c of wrongTypes())await act(['ModifyColumn',T.D,c,{type:'Date'}]);toast('Types corrigés. Réimportez le fichier pour remplir les dates.');setTimeout(discover,500)}catch(e){toast('Correction refusée : '+(e.message||e),true)}}
+const wrongTypes=()=>DATECOLS.filter(c=>S.colTypes&&S.colTypes[c]&&!/^Date/.test(S.colTypes[c]));
+const COMCOLS=['Dossier','Auteur','Date','Texte','Important'];
+async function mkCom(){try{if(!S.comOk)await act(['AddTable',T.C,[{id:'Dossier',type:'Ref:'+T.D},{id:'Auteur',type:'Ref:'+T.P},{id:'Date',type:'DateTime:Europe/Paris'},{id:'Texte',type:'Text'},{id:'Important',type:'Bool'}]]);
+  else for(const c of COMCOLS.filter(c=>!S.comCols.includes(c)))await act(['AddColumn',T.C,c,{type:c=='Dossier'?'Ref:'+T.D:c=='Auteur'?'Ref:'+T.P:c=='Date'?'DateTime:Europe/Paris':c=='Important'?'Bool':'Text',isFormula:false}]);
+  toast('Table des commentaires prête');await discover();loadComs();checkAgents()}catch(e){toast('Création refusée : '+(e.message||e),true)}}
+function checkAgents(){const cm=S.comOk===false||(S.comCols&&S.comOk&&COMCOLS.some(c=>!S.comCols.includes(c)));
+  if(cm&&!wrongTypes().length&&!missingCols().length){const w=$('warnbar');w.hidden=false;
+    w.innerHTML=S.comOk?`La table <b>${esc(T.C)}</b> n’a pas toutes ses colonnes (manque : <b>${COMCOLS.filter(c=>!S.comCols.includes(c)).join(', ')}</b>). Les commentaires et les renvois à l’agent échouent. <button class="btn p" id="mkCom" style="margin-left:8px">Créer les colonnes</button>`:`Aucune table de commentaires trouvée dans le document. Les commentaires et les renvois à l’agent échouent. <button class="btn p" id="mkCom" style="margin-left:8px">Créer la table Commentaires</button>`;$('mkCom').onclick=mkCom;return}
+  checkAgents0()}
+function checkAgents0(){const wt=wrongTypes();if(wt.length){const w=$('warnbar');w.hidden=false;
+  w.innerHTML=`Les colonnes <b>${wt.join(', ')}</b> ne sont pas de type <b>Date</b> (actuellement ${esc(S.colTypes[wt[0]])}) : les dates ne s’affichent pas. <button class="btn p" id="fxT" style="margin-left:8px">Passer en type Date</button>`;$('fxT').onclick=fixTypes;return}
+  const mc=missingCols();if(mc.length){const w=$('warnbar');w.hidden=false;
+  w.innerHTML=`Colonnes absentes de la table <b>Dossiers</b> : <b>${mc.map(esc).join(', ')}</b>. Sans elles, la saisie, l’import, les échéances et les statistiques ne fonctionnent pas. <button class="btn p" id="mkCols" style="margin-left:8px">Créer les colonnes manquantes</button>`;$('mkCols').onclick=mkCols;return}
+  checkAgents2()}
+function checkAgents2(){const bad=S.recs.filter(r=>real(r)&&r.Agent_Assigne&&!S.pers[r.Agent_Assigne]),w=$('warnbar');
+  if(!bad.length&&!S.recs.some(r=>r._agentTxt&&!r.Agent_Assigne)){relBanner(w);return}
+  const ex=bad[0]?bad[0].Agent_Assigne:(S.recs.find(r=>r._agentTxt&&!r.Agent_Assigne)||{})._agentTxt;
+  w.hidden=false;w.innerHTML=`Attention : ${bad.length||'des'} dossier(s) ont un agent introuvable dans la table « ${esc(T.P)} » (exemple : « ${esc(ex)} »). Vérifiez que la colonne <b>Agent_Assigne</b> est de type Référence vers cette table.`}
+function trackChanges(rs){
+  rs.forEach(r=>{const g=[r.Statut,r.Agent_Assigne,r.Date_Arrivee,r.Nom_Dossier,r.Sous_Commission].join('|');
+    if(S.sig[r.id]!==undefined&&S.sig[r.id]!==g&&Date.now()-(S.mine[r.id]||0)>2500){S.flash[r.id]=Date.now();
+      if(r.id==S.sel)toast('Ce dossier vient d’être mis à jour par un collègue')}
+    S.sig[r.id]=g});
+}
+/* repère la vraie table « Personnel » d'après le type de la colonne Agent_Assigne */
+async function discover(){
+  try{
+    const tb=rowsOf(await grist.docApi.fetchTable('_grist_Tables')),cl=rowsOf(await grist.docApi.fetchTable('_grist_Tables_column')),tid={};
+    tb.forEach(t=>tid[t.id]=t.tableId);
+    S.metaCols=cl.filter(x=>tid[x.parentId]==T.D).map(x=>x.colId);
+    const ids=tb.map(t=>t.tableId).filter(x=>!/^_grist/.test(x)),fnd=re=>ids.find(x=>re.test(norm(x)));
+    S.tables=ids;T.C=fnd(/^commentaire/)||T.C;T.S=fnd(/^souscommission/)||T.S;T.I=fnd(/^identit/)||T.I;S.comOk=ids.includes(T.C);
+    S.comCols=cl.filter(x=>tid[x.parentId]==T.C).map(x=>x.colId);
+    S.colTypes={};cl.filter(x=>tid[x.parentId]==T.D).forEach(x=>S.colTypes[x.colId]=String(x.type));
+    const a=cl.find(x=>tid[x.parentId]==T.D&&x.colId=='Agent_Assigne');S.agentType=a?String(a.type):'';
+    const m=/^Ref:(.+)$/.exec(S.agentType);if(m)T.P=m[1];
+  }catch(e){console.warn('métadonnées inaccessibles',e)}
+}
+const dcols=()=>S.recs.length?Object.keys(S.recs[0]):(S.metaCols||[]);
+async function loadPers(){const o={};try{rowsOf(await grist.docApi.fetchTable(T.P)).forEach(p=>o[p.id]=p)}catch(e){console.error(e)}return o}
+async function init(){
+  await discover();
+  S.pers=await loadPers();
+  if(!Object.keys(S.pers).length){
+    try{for(const t of await grist.docApi.listTables()){if(!/personnel/i.test(t))continue;const x=await grist.docApi.fetchTable(t);if('NOM' in x&&x.id.length){T.P=t;S.pers=await loadPers();break}}}catch(e){}}
+  let ident=[];try{ident=rowsOf(await grist.docApi.fetchTable(T.I))}catch(e){console.error(e)}
+  if(ident.length>1){S.owner=true;try{S.as=+sessionStorage.getItem('gprev_as')||0}catch(e){}}
+  else if(ident.length==1)S.me=S.pers[ident[0].Personnel]||null;
+  await loadSC();await loadComs();await loadRep();
+  setInterval(poll,5000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll()});
+}
+async function loadSC(){const o={};try{rowsOf(await grist.docApi.fetchTable(T.S)).forEach(s=>o[s.id]=s)}catch(e){}S.scs=o}
+async function loadComs(){try{S.comsAll=rowsOf(await grist.docApi.fetchTable(T.C))}catch(e){S.comsAll=[]}
+  const sg=S.comsAll.map(c=>c.id+':'+(c.Texte||'').length+':'+c.Dossier).join(',');const ch=sg!==S.comSig;S.comSig=sg;return ch}
+async function poll(){if(document.hidden)return;const ch=await loadComs();await loadSC();await loadRep();if(ch){renderList();if(S.sel)renderComs()}}
+
+/* ============ IDENTITÉ ET DROITS ============ */
+function actor(){if(S.owner)return S.as&&S.pers[S.as]?S.pers[S.as]:OWNER;return S.me||null}
+const roleN=a=>a?(parseInt(a.Role_hierarchique)||0):0;
+const isGrp=a=>!!a&&(a.isOwner||[1,2].includes(roleN(a)));
+const isChef=a=>!!a&&roleN(a)==3&&!a.isOwner;
+const isSAF=a=>!!a&&a.Service=='SAF';
+function canSee(r,a){
+  if(!a)return false;if(isGrp(a))return true;
+  if(isSAF(a)&&['Reçu SAF','Retour SAF','Clôturé'].includes(r.Statut))return true;
+  if(isSAF(a)&&r.Sous_Commission)return true;
+  if(isChef(a)&&svcN(r.Service_Attribue)==svcN(a.Service)&&r.Service_Attribue)return true;
+  return !!r.Agent_Assigne&&r.Agent_Assigne==a.id;
+}
+function editable(k,r){const a=actor();if(!a)return false;if(isGrp(a))return true;
+  if(isChef(a)&&r.Service_Attribue&&svcN(r.Service_Attribue)==svcN(a.Service))return true;
+  if(isSAF(a)&&['Reçu SAF','Retour SAF'].includes(r.Statut))return IDF.includes(k)||k=='Date_Arrivee';
+  if(r.Agent_Assigne&&r.Agent_Assigne==a.id&&ACTIVE.includes(r.Statut))return IDF.includes(k)||['Nb_Derogations','Nb_Demandes_Avis','Avis'].includes(k);
+  return false}
+const real=r=>r.Statut||r.Etablissement||r.Numero_Urbanisme||r.Ville;
+const stageOf=r=>KOF[r.Statut]||'saf';
+function pool(){const a=actor();return S.recs.filter(r=>real(r)&&canSee(r,a))}
+function inStage(r){const k=stageOf(r),j=jours(r);
+  if(S.stage=='all')return k!='clos';
+  if(S.stage=='sc')return scUp(r);
+  if(S.stage=='sclate')return scLate(r);
+  if(S.stage=='late')return k!='clos'&&j!=null&&j<0;
+  if(S.stage=='soon')return k!='clos'&&j!=null&&j>=0&&j<=7;
+  return k==S.stage}
+const gkey=r=>r.Agent_Assigne?'a'+r.Agent_Assigne:'s'+(r.Service_Attribue||'');
+const fullName=p=>p?String(p.Concact||'').trim()||plabel(p):'';
+const glabel=k=>k[0]=='a'?(fullName(S.pers[+k.slice(1)])||('Agent '+k.slice(1))):(k.slice(1)||'Non attribué');
+function shown(){const q=norm(S.q);
+  return pool().filter(inStage).filter(r=>!S.who||gkey(r)==S.who)
+   .filter(r=>!q||norm([r.Nom_Dossier,r.Etablissement,r.Ville,r.Numero_Urbanisme,r.Numero_AIRS].join(' ')).includes(q))
+   .sort((a,b)=>(jours(a)??9e9)-(jours(b)??9e9))}
+
+/* ============ RENDU : EN-TÊTE ============ */
+function renderWho(){
+  const a=actor(),w=$('who');
+  if(S.owner){
+    const by={};Object.values(S.pers).forEach(p=>(by[p.Service||'Autres']=by[p.Service||'Autres']||[]).push(p));
+    const og=Object.keys(by).map(s=>`<optgroup label="${esc(s)}">${by[s].sort((x,y)=>(x.Role_hierarchique-y.Role_hierarchique)||x.NOM.localeCompare(y.NOM)).map(p=>`<option value="${p.id}" ${p.id==S.as?'selected':''}>${esc(plabel(p))}</option>`).join('')}</optgroup>`).join('');
+    w.innerHTML=`<span class="nm"><b>Mode propriétaire</b><small>Voir en tant que</small></span>
+      <select class="asel" id="asel" aria-label="Voir en tant que"><option value="0" ${!S.as?'selected':''}>Moi : vue complète</option>${og}</select>`;
+    $('asel').onchange=e=>{S.as=+e.target.value;try{sessionStorage.setItem('gprev_as',S.as)}catch(x){}S.sel=null;S.who=null;S.stage='all';render()};
+    const sb=$('simbar');
+    if(S.as&&a&&!a.isOwner){sb.hidden=false;sb.innerHTML=`Vue simulée : <b>${esc(plabel(a))}</b> (${esc(a.Service||'')}). Les données sont affichées comme cette personne les verrait. Vos actions sont enregistrées avec vos droits de propriétaire.`}
+    else sb.hidden=true;
+  }else if(a){
+    w.innerHTML=`<span class="nm"><b>${esc(plabel(a))}</b><small>${esc(a.Service||'')}</small></span>${avatar(a)}`;
+  }else{
+    w.innerHTML=`<span class="nm"><b>Utilisateur non reconnu</b><small>Vérifier le mail dans Personnel et la table Identite</small></span>`;
+  }
+  const g=isGrp(a),sa=isSAF(a);
+  $('bNew').hidden=!(g||sa);$('bImp').hidden=!(g||sa);$('bSC').hidden=!g;
+  $('bNew').innerHTML=ico('plus')+'Nouveau';$('bImp').innerHTML=ico('up')+'Importer';$('bSC').innerHTML=ico('cal')+'Séances';
+}
+
+/* ============ RENDU : BULLES ============ */
+function visStages(){const a=actor();if(!a||isGrp(a))return STAGES.map(s=>s.k);
+  if(isSAF(a))return['saf','retour','clos'];if(isChef(a))return STAGES.map(s=>s.k).filter(k=>k!='saf');return STAGES.map(s=>s.k).filter(k=>k!='saf'&&k!='svc')}
+const scLate=r=>{if(['Retour SAF','Clôturé'].includes(r.Statut)||!r.Sous_Commission)return false;const sc=S.scs[r.Sous_Commission];return !!sc&&sc.Date-14*86400<todayU()};
+function renderField(){
+  const fk=document.activeElement&&document.activeElement.dataset?document.activeElement.dataset.key:null;
+  const pl=pool(),cnt={},late={};STAGES.forEach(s=>{cnt[s.k]=0;late[s.k]=0});let nl=0,ns=0,nsc=0;const VS=visStages();if(S.stage!='all'&&!['late','soon','sclate','sc'].includes(S.stage)&&!VS.includes(S.stage))S.stage='all';
+  pl.forEach(r=>{const k=stageOf(r);cnt[k]++;if(scLate(r))nsc++;const j=jours(r);if(k!='clos'&&j!=null){if(j<0){late[k]++;nl++}else if(j<=7)ns++}});
+  const size=n=>n?Math.min(112,Math.round(52+13*Math.sqrt(n))):50;
+  let i=0;
+  const bub=(k,n,l,lt)=>{const bump=S.prev[k]!==undefined&&S.prev[k]!==n;S.prev[k]=n;
+    return `<button class="bub ${n?'':'zero'} ${bump?'bump':''}" data-k="${k}" data-key="${k}" style="--d:${size(n)}px;--i:${i++}" aria-pressed="${S.stage==k}" title="${esc(l)} : ${n}">
+      <span class="wrap"><span class="disc"><b>${n}</b>${lt?`<i class="lt" title="${lt} en retard">${lt}</i>`:''}</span></span><span class="lbl">${esc(l)}</span></button>`};
+  const el=$('field');
+  el.innerHTML=bub('late',nl,'En retard')+bub('soon',ns,'Sous 7 jours')+bub('sclate',nsc,'Retard avant sous-com')+bub('sc',pl.filter(scUp).length,'Passage en sous-com')+'<span class="sep"></span><div class="pipe">'+STAGES.filter(s=>VS.includes(s.k)).map(s=>bub(s.k,cnt[s.k],s.l,s.k=='clos'?0:late[s.k])).join('')+'</div>';
+  if(!S.intro){S.intro=true;el.classList.add('intro');setTimeout(()=>el.classList.remove('intro'),1300)}
+  if(fk){const b=el.querySelector(`[data-key="${fk}"]`);if(b)b.focus()}
+}
+$('field').onclick=e=>{const b=e.target.closest('[data-key]');if(!b)return;const k=b.dataset.key;S.stage=S.stage==k?'all':k;S.who=null;S.sel=null;renderField();renderSub();renderList();renderDetailNow()};
+function renderSub(){
+  const el=$('sub'),g={};
+  pool().forEach(r=>{const k=gkey(r),o=g[k]=g[k]||{n:0,todo:0,late:0};o.n++;
+    if(ACTIVE.includes(r.Statut)){o.todo++;const j=jours(r);if(j!=null&&j<0)o.late++}});
+  const ks=Object.keys(g).sort((a,b)=>g[b].todo-g[a].todo||g[b].n-g[a].n);
+  if(S.who&&!g[S.who])S.who=null;
+  if(!ks.length){el.hidden=true;return}
+  el.hidden=false;
+  el.innerHTML=`<span class="sl">Par agent : à faire / total</span>`+ks.map(k=>{
+    const o=g[k],p=k[0]=='a'?S.pers[+k.slice(1)]:null,lab=glabel(k);
+    return `<button class="sb" data-who="${k}" aria-pressed="${S.who==k}" title="${esc(lab)} : ${o.todo} à faire, ${o.n} dossiers au total${o.late?', dont '+o.late+' en retard':''}">${p?avatar(p):`<span class="av" style="background:var(--saf)">${esc(lab.slice(0,2).toUpperCase())}</span>`}<span>${esc(lab)}</span><b>${o.todo}</b><span class="tot">/ ${o.n}</span>${o.late?`<i class="lt">${o.late}</i>`:''}</button>`}).join('');
+}
+$('sub').onclick=e=>{const b=e.target.closest('[data-who]');if(!b)return;S.who=S.who==b.dataset.who?null:b.dataset.who;S.limit=200;renderSub();renderList();if(!S.sel)renderDetailNow()};
+
+/* ============ RENDU : LISTE ============ */
+function dayBadge(j){return j==null?'<span class="pas na">sans délai</span>':j<0?`<span class="pas bad">${-j} j de retard</span>`:j<=7?`<span class="pas soon">${j} j</span>`:`<span class="pas ok">${j} j</span>`}
+function emptyDiag(){if(S.owner||pool().length)return '';const me=S.me,got=S.recs.length,mine=me?S.recs.filter(r=>r.Agent_Assigne==me.id).length:0;
+  const why=!me?'Votre compte n’est relié à aucune fiche de la table Personnel (table Identite vide ou sans correspondance avec votre e-mail).':
+   got==0?`Grist ne transmet aucun dossier à votre compte. Les règles d’accès filtrent tout : vérifiez que l’e-mail de votre fiche Personnel (colonne mail) est <b>identique</b> à l’e-mail du compte (majuscules comprises) et qu’au moins un dossier vous est attribué dans « Agent ».`:
+   mine==0?`Grist transmet ${got} dossier(s), mais aucun ne vous est attribué comme agent.`:'';
+  return `<div class="empty" style="text-align:left"><b>Aucun dossier à afficher.</b><br>${why}<div class="note" style="margin-top:8px">Diagnostic : fiche reconnue : ${me?esc(fullName(me))+' (n° '+me.id+')':'aucune'} · dossiers reçus de Grist : ${got} · dossiers attribués à cette fiche : ${mine}.</div></div>`}
+function renderList(){
+  const all=shown(),l=all.slice(0,S.limit),cn={};
+  S.comsAll.forEach(c=>{cn[c.Dossier]=cn[c.Dossier]||{n:0,i:0};cn[c.Dossier].n++;if(c.Important)cn[c.Dossier].i++});
+  const now=Date.now(),ag=S.who?' · '+glabel(S.who):'';
+  $('cards').innerHTML=(all.length?`<div style="color:var(--mut);font-size:12.5px;padding:0 4px">${all.length} dossier${all.length>1?'s':''} · ${esc(SLAB[S.stage])}${esc(ag)}</div>`:'')+
+   (l.map(r=>{const k=stageOf(r),p=r.Agent_Assigne?S.pers[r.Agent_Assigne]:null,c=cn[r.id];
+    return `<div class="card ${r.id==S.sel?'sel':''} ${S.flash[r.id]&&now-S.flash[r.id]<4000?'flash':''}" data-id="${r.id}">
+     <div class="c-top"><div class="c-name">${esc(r.Nom_Dossier||nomDossier(r)||'(sans nom)')}</div>${k=='clos'?'':dayBadge(jours(r))}</div>
+     <div class="c-meta"><span class="pill" data-k="${k}">${esc(r.Statut||'Reçu SAF')}</span>
+      ${p?`<span class="chip" title="Dossier attribué à ${esc(fullName(p))}">${avatar(p)}${esc(fullName(p))}</span>`:`<span>${esc(r.Service_Attribue||'non attribué')}</span>`}
+      ${r.Nb_Derogations?`<span class="mini hot">${r.Nb_Derogations} dérogation${r.Nb_Derogations>1?'s':''}</span>`:''}
+      ${r.Nb_Demandes_Avis?`<span class="mini hot">${r.Nb_Demandes_Avis} demande${r.Nb_Demandes_Avis>1?'s':''} d’avis</span>`:''}
+      ${c?`<span class="chip" title="${c.n} commentaire(s)">${ico('msg')}${c.n}${c.i?' !':''}</span>`:''}</div></div>`}).join('')||(emptyDiag()||'<div class="empty">Aucun dossier dans cette sélection.</div>'))+
+   (all.length>l.length?`<button class="btn more" id="more">Afficher plus (${all.length-l.length} restants)</button>`:'');
+}
+$('cards').onclick=e=>{if(e.target.closest('#more')){S.limit+=300;renderList();return}
+  const c=e.target.closest('[data-id]');if(!c)return;S.sel=+c.dataset.id;renderList();renderDetailNow();
+  /* informe Grist du dossier sélectionné : le widget Rapport l'ouvre */
+  try{grist.setCursorPos({rowId:S.sel}).catch(()=>{})}catch(err){}};
+$('q').oninput=e=>{S.q=e.target.value;S.limit=200;renderList()};
+
+/* ============ RENDU : DÉTAIL ============ */
+const dirty=e=>e.tagName=='SELECT'?!(e.selectedOptions[0]&&e.selectedOptions[0].defaultSelected):e.type=='checkbox'?e.checked!==e.defaultChecked:e.value!==e.defaultValue;
+const editing=()=>{const e=document.activeElement;return !!e&&$('detail').contains(e)&&/^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName)&&dirty(e)};
+function renderDetail(){if(editing()){S.pending=true;return}renderDetailNow()}
+document.addEventListener('focusout',()=>setTimeout(()=>{if(S.pending&&!editing()){S.pending=false;renderDetailNow()}},60));
+function fmtVal(f,v){if(f.t=='bool')return v?'Oui':'Non';if(f.t=='date')return fd(v);if(f.t=='int')return v||0;if(f.t=='url')return v?`<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>`:'—';return esc(v||'—')}
+function cntHtml(r){const can=editable('Nb_Derogations',r),one=(k,l)=>`<div class="cnt"><span>${l}</span><b>${r[k]||0}</b>${can?`<button class="btn" data-inc="${k}" data-d="1" title="Ajouter">+ Ajouter</button>${r[k]?`<button class="btn" data-inc="${k}" data-d="-1" title="Retirer la dernière">−</button>`:''}`:''}</div>`;
+  return `<div class="fld w cnts">${one('Nb_Derogations','Demandes de dérogation')}${one('Nb_Demandes_Avis','Demandes d’avis')}</div>`}
+function fieldHtml(f,r){
+  const can=editable(f.k,r),v=f.k=='Numero_Urbanisme'?(r.Numero_Urbanisme||'')+(r.Modificatif||''):r[f.k];
+  if(!can)return `<div class="fld ${f.w?'w':''}"><span>${f.l}</span><div class="val">${fmtVal(f,v)}</div></div>`;
+  let i;
+  if(f.t=='sel')i=`<select data-f="${f.k}">${f.o.map(o=>`<option value="${esc(o)}" ${o==(v||'')?'selected':''}>${esc(o||'—')}</option>`).join('')}</select>`;
+  else if(f.t=='bool')i=`<input type="checkbox" data-f="${f.k}" ${v?'checked':''}>`;
+  else if(f.t=='int')i=`<input type="number" min="0" data-f="${f.k}" value="${v||0}">`;
+  else if(f.t=='date')i=`<input type="date" data-f="${f.k}" value="${iso(v)}">`;
+  else i=`<input type="${f.t=='url'?'url':'text'}" data-f="${f.k}" value="${esc(v||'')}" placeholder="${esc(f.ph||'')}">`;
+  return `<div class="fld ${f.w?'w':''}"><span>${f.l}</span>${i}</div>`;
+}
+function renderDetailNow(){
+  S.pending=false;
+  const el=$('detail'),r=S.recs.find(x=>x.id==S.sel);
+  document.body.classList.toggle('has-sel',!!r&&!!S.sel);if(r){document.body.classList.remove('dash');document.body.classList.remove('dashfull')}
+  if(!r||!canSee(r,actor())){S.sel=null;document.body.classList.remove('has-sel');
+    const pn=S.stage=='clos'||S.stage=='sc';document.body.classList.toggle('dash',pn);document.body.classList.toggle('dashfull',pn&&!S.showList);if(S.stage=='clos'){renderDash(el);return}if(S.stage=='sc'){renderSCPane(el);return}
+    el.innerHTML='<div class="empty" style="margin-top:12vh"><b>Choisissez un dossier</b><br>Cliquez sur une bulle pour filtrer, puis sur un dossier pour le suivre.</div>';return}
+  const j=jours(r),k=stageOf(r),cur=STEP_OF[r.Statut]??0,sc=r.Sous_Commission&&S.scs[r.Sous_Commission],a=actor();
+  const cd=j==null?['na','–','sans délai']:j<0?['bad',-j,'j de retard']:j<=7?['soon',j,'j restants']:['ok',j,'j restants'];
+  const track=STEPS.map((s,i)=>`<div class="tk ${i<cur?'done':i==cur?'cur':''}" data-k="${i==cur?k:s[1]}" style="--c:var(--${i==cur?k:s[1]})"><i></i><span>${s[0]}</span></div>`).join('');
+  const chefAg=isGrp(a)||(isChef(a)&&svcN(r.Service_Attribue)==svcN(a.Service));
+  const agents=Object.values(S.pers).filter(p=>roleN(p)==4&&(!r.Service_Attribue||svcN(p.Service)==svcN(r.Service_Attribue)));
+  el.innerHTML=`<div class="sheet" data-rid="${r.id}">
+   <button class="btn back" onclick="S.sel=null;renderList();renderDetailNow()">${ico('back')}Retour à la liste</button>
+   <div class="box"><div class="head"><div><h2>${esc(r.Nom_Dossier||nomDossier(r)||'(sans nom)')}</h2>
+     <div class="row"><span class="pill" data-k="${k}">${esc(r.Statut||'Reçu SAF')}</span>
+      <span>Échéance <b>${fd(echOf(r))}</b></span>${sc?`<span class="mini">Séance du ${fd(sc.Date)} (dossier prêt 14 j avant)</span>`:''}
+      ${r.Nb_Derogations?`<span class="mini hot">${r.Nb_Derogations} dérogation${r.Nb_Derogations>1?'s':''}</span>`:''}${r.Nb_Demandes_Avis?`<span class="mini hot">${r.Nb_Demandes_Avis} demande${r.Nb_Demandes_Avis>1?'s':''} d’avis</span>`:''}
+      ${r.Numero_AIRS?`<span class="mini">AIRS ${esc(r.Numero_AIRS)}</span>`:''}
+      ${r.Agent_Assigne&&S.pers[r.Agent_Assigne]?`<span class="chip" title="Agent en charge">${avatar(S.pers[r.Agent_Assigne])}${esc(fullName(S.pers[r.Agent_Assigne]))}</span>`:`<span class="mini">${r.Service_Attribue?'Chez le chef de service '+esc(r.Service_Attribue)+', pas encore d’agent':'Pas encore attribué'}</span>`}
+      ${r.Lien_Prevarisc?`<a href="${esc(r.Lien_Prevarisc)}" target="_blank" rel="noopener">Ouvrir dans Prevarisc</a>`:''}</div></div>
+     <div class="cd ${cd[0]}"><div><b>${cd[1]}</b><small>${cd[2]}</small></div></div></div>
+     <div class="track">${track}</div></div>
+   <div class="box"><h3>Informations (modifiables, partagées en direct)</h3><div class="grid">${FIELDS.map(f=>fieldHtml(f,r)).join('')}
+     ${cntHtml(r)}
+     ${r.Objet?`<div class="fld w"><span>Objet (Prevarisc)</span><div class="val" style="font-weight:400;max-height:90px;overflow:auto;white-space:pre-wrap">${esc(r.Objet)}</div></div>`:''}</div>
+     <div class="grid" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+      <div class="fld"><span>Service</span>${isGrp(a)?`<select data-x="svc"><option value="">—</option>${['BMET','PMET','Chargé de mission'].map(o=>`<option ${o==r.Service_Attribue?'selected':''}>${o}</option>`).join('')}</select>`:`<div class="val">${esc(r.Service_Attribue||'—')}</div>`}</div>
+      <div class="fld"><span>Agent</span>${chefAg?`<select data-x="agent"><option value="0">—</option>${agents.map(p=>`<option value="${p.id}" ${p.id==r.Agent_Assigne?'selected':''}>${esc(p.NOM+' '+(p.Prenom||''))}</option>`).join('')}</select>`:`<div class="val">${r.Agent_Assigne?esc(nom(r.Agent_Assigne)):'—'}</div>`}</div>
+      <div class="fld"><span>Séance de sous-commission</span>${isGrp(a)?`<select data-x="sc"><option value="0">Aucune</option>${Object.values(S.scs).sort((x,y)=>x.Date-y.Date).map(s=>`<option value="${s.id}" ${s.id==r.Sous_Commission?'selected':''}>${fd(s.Date)} ${esc(s.Libelle||'')}</option>`).join('')}</select>`:`<div class="val">${sc?fd(sc.Date):'—'}</div>`}</div>
+      <div class="fld"><span>Pièces déposées sur le réseau</span><div class="val">${r.Pieces_Reseau?'Oui':'Non'}</div></div></div></div>
+   ${actionsHtml(r)}
+   <div class="box"><h3>Fil de discussion</h3><div id="clist"></div>
+     <div class="composer"><textarea id="ctxt" rows="2" placeholder="Écrire un commentaire (information importante, consigne, point de vigilance…)">${esc(S.draft[r.id]||'')}</textarea>
+      <div class="bar"><label><input type="checkbox" id="cimp"> Marquer comme important</label><button class="btn p" onclick="addCom(${r.id})">${ico('msg')}Publier</button></div></div></div></div>`;
+  renderComs();
+}
+$('detail').addEventListener('change',e=>{
+  const rid=+(e.target.closest('[data-rid]')||{dataset:{}}).dataset.rid;if(!rid)return;
+  if(e.target.dataset.f)return saveField(rid,e.target);
+  const x=e.target.dataset.x;
+  if(x=='svc')upd(rid,{Service_Attribue:e.target.value},'Service modifié');
+  if(x=='agent')upd(rid,{Agent_Assigne:+e.target.value},'Agent modifié');
+  if(x=='sc')upd(rid,{Sous_Commission:+e.target.value},'Séance modifiée');
+});
+$('detail').addEventListener('input',e=>{if(e.target.id=='ctxt'&&S.sel)S.draft[S.sel]=e.target.value});
+function renderComs(){const el=$('clist');if(!el)return;
+  const l=S.comsAll.filter(c=>c.Dossier==S.sel).sort((a,b)=>a.Date-b.Date);
+  el.innerHTML=l.length?l.map(c=>`<div class="cm ${c.Important?'imp':''}"><div class="mh"><b>${esc(nom(c.Auteur))}${c.Important?' · important':''}</b><span>${c.Date?new Date(c.Date*1000).toLocaleString('fr-FR'):''}</span></div><div>${esc(c.Texte)}</div></div>`).join(''):'<div style="color:var(--mut)">Aucun commentaire pour le moment.</div>'}
+
+/* ============ ACTIONS WORKFLOW ============ */
+function charge(sv){const t=todayU(),wk=t-7*86400,mo=t-30*86400;
+  return Object.values(S.pers).filter(p=>roleN(p)==4&&svcN(p.Service)==svcN(sv)).map(p=>{const m=S.recs.filter(r=>r.Agent_Assigne==p.id);
+    return{p,att:m.filter(r=>r.Statut=='En attente agent').length,cours:m.filter(r=>['En cours','Attente pièces','À reprendre'].includes(r.Statut)).length,
+      sem:m.filter(r=>r.Date_Termine_Agent>=wk).length,mois:m.filter(r=>r.Date_Termine_Agent>=mo).length}})}
+function actionsHtml(r){
+  const s=r.Statut,a=actor(),mine=a&&r.Agent_Assigne&&r.Agent_Assigne==a.id,b=[];
+  const P=(t,f)=>`<button class="btn p" onclick="${f}">${t}</button>`,Sx=(t,f)=>`<button class="btn" onclick="${f}">${t}</button>`,D=(t,f)=>`<button class="btn d" onclick="${f}">${t}</button>`;
+  if(s=='Reçu SAF'&&(isGrp(a)||isSAF(a)))b.push(`<div class="grp"><label>Attribuer au service</label><select id="svS"><option>BMET</option><option>PMET</option><option>Chargé de mission</option></select></div>`+P('Attribuer au service',`toSvc(${r.id})`));
+  if(s=='Attribué service'&&(isGrp(a)||(isChef(a)&&svcN(r.Service_Attribue)==svcN(a.Service)))){
+    const c=charge(r.Service_Attribue);
+    b.push(`<div class="load" style="flex-basis:100%"><table><thead><tr><th>Charge des agents · cliquer pour choisir</th><th>En attente</th><th>En cours</th><th>Faits 7 j</th><th>Faits 30 j</th></tr></thead><tbody>${c.map(x=>`<tr class="pick" onclick="document.getElementById('agS').value=${x.p.id}"><td>${avatar(x.p)} ${esc(x.p.NOM)} ${esc(x.p.Prenom||'')}</td><td><span class="n ${x.att>=4?'w':''}">${x.att}</span></td><td><span class="n ${x.cours>=6?'w':''}">${x.cours}</span></td><td><span class="n">${x.sem}</span></td><td><span class="n">${x.mois}</span></td></tr>`).join('')||'<tr><td colspan="5">Aucun agent pour ce service.</td></tr>'}</tbody></table></div>`+
+      `<div class="grp"><label>Agent</label><select id="agS">${c.map(x=>`<option value="${x.p.id}">${esc(x.p.NOM+' '+(x.p.Prenom||''))}</option>`).join('')}</select></div>`+P('Attribuer à l’agent',`toAgent(${r.id})`));}
+  if(mine||isGrp(a)){
+    if(s=='En attente agent')b.push(P('Commencer l’instruction',`setS(${r.id},'En cours')`));
+    if(s=='En cours'||s=='À reprendre')b.push(Sx('Mettre en attente de pièces',`setS(${r.id},'Attente pièces')`));
+    if(s=='Attente pièces')b.push(P('Pièces reçues, reprendre',`setS(${r.id},'En cours')`));
+    if(['En cours','Attente pièces','À reprendre'].includes(s))
+      b.push(`<div style="flex-basis:100%"><b>Terminer le dossier</b><div class="note">Renseigner l’avis, les dérogations et demandes d’avis ci-dessus, puis confirmer.</div></div>
+       <div class="grp"><label>Avis</label><select id="avS"><option value="">Choisir</option>${['Favorable','Défavorable'].map(o=>`<option ${o==r.Avis?'selected':''}>${o}</option>`).join('')}</select></div>
+       <label style="display:flex;gap:8px;align-items:center;padding-bottom:8px"><input type="checkbox" id="resS"> Pièces scannées et dossier déposé sur le réseau</label>`+P('Envoyer en relecture',`finish(${r.id})`));}
+  if(s=='Relecture chef de service'&&(isGrp(a)||(isChef(a)&&svcN(r.Service_Attribue)==svcN(a.Service)))){b.push(P('Valider, vers le chef de groupement',`setS(${r.id},'Relecture chef de groupement')`));b.push(D('Renvoyer à l’agent',`back(${r.id},false)`))}
+  if(s=='Relecture chef de groupement'&&isGrp(a)){b.push(P('Valider, retour au SAF',`setS(${r.id},'Retour SAF')`));b.push(D('Renvoyer à l’agent',`back(${r.id},true)`))}
+  if(s=='Retour SAF'&&(isSAF(a)||isGrp(a)))b.push(P('Clôturer le dossier',`setS(${r.id},'Clôturé',{Date_Cloture:todayU()})`));
+  if(!b.length)return '';
+  return `<div class="box todo"><h3>À faire sur ce dossier</h3><div class="acts">${b.join('')}</div></div>`;
+}
+function upd(id,f,msg){S.mine[id]=Date.now();
+  return act(['UpdateRecord',T.D,id,f]).then(()=>{if(msg)toast(msg)}).catch(e=>{const m=String(e.message||e),k=m.match(/KeyError:?\s*'?(\w+)'?/);toast(k?`La colonne « ${k[1]} » n’existe pas dans la table Dossiers : créez-la avec ce nom exact.`:'Action refusée : '+m,true);renderDetailNow()})}
+const setS=(id,s,x={})=>upd(id,{Statut:s,...x},'Statut : '+s);
+const toSvc=id=>upd(id,{Service_Attribue:$('svS').value,Statut:'Attribué service'},'Attribué au service');
+const toAgent=id=>{const v=+$('agS').value;if(!v)return toast('Choisissez un agent',true);upd(id,{Agent_Assigne:v,Statut:'En attente agent',Date_Attribution_Agent:todayU()},'Attribué à '+nom(v))};
+function saveField(id,el){const k=el.dataset.f,f=FD[k];let v;
+  if(el.type=='checkbox')v=el.checked;else if(f.t=='int')v=Math.max(0,parseInt(el.value||'0',10)||0);
+  else if(f.t=='date')v=el.value?Date.parse(el.value)/1000:null;else v=el.value.trim();
+  if(k=='Numero_Urbanisme'){v=String(v).replace(/\s+/g,'').toUpperCase();const m=v.match(/M\d{2}$/);return upd(id,{Numero_Urbanisme:m?v.slice(0,-3):v,Modificatif:m?m[0]:''},'Enregistré')}
+  if(k=='Numero_AIRS'){v=String(v).replace(/\D/g,'');return upd(id,{Numero_AIRS:v,Source:v?'AIRS':'DEMAT'},'Enregistré')}
+  return upd(id,{[k]:v},'Enregistré')}
+function bump(id,k,d){const r=S.recs.find(x=>x.id==id);if(!r)return;upd(id,{[k]:Math.max(0,(+r[k]||0)+d)},d>0?'Ajouté':'Retiré')}
+$('detail').addEventListener('click',e=>{const b=e.target.closest('[data-inc]');if(!b)return;const rid=+b.closest('[data-rid]').dataset.rid;bump(rid,b.dataset.inc,+b.dataset.d)});
+/* ============ RAPPORT (.odt) — partagé avec le widget Rapport ============ */
+const RT={V:'Rapports_Versions',R:'Rapports_Remarques',F:'Rapports_Fichiers'};
+const RTYPES=['Oubli de réglementation / prescription','Erreur de calcul d’effectif','Erreur de classement (type, catégorie)','Rédaction / mise en forme','Autre'];
+async function loadRep(){try{const t=await grist.docApi.fetchTable(RT.V),o={};t.id.forEach((x,i)=>{const d=refId(t.Dossier[i]);o[d]=Math.max(o[d]||0,+t.Numero[i]||0)});S.repV=o}catch(e){S.repV={}}}
+function b64(u){let s='';for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s)}
+async function repTables(){const ids=await grist.docApi.listTables();
+  if(!ids.includes(RT.V))await act(['AddTable',RT.V,[{id:'Dossier',type:'Ref:'+T.D},{id:'Numero',type:'Int'},{id:'Etape',type:'Text'},{id:'Auteur',type:'Ref:'+T.P},{id:'Date',type:'DateTime:Europe/Paris'},{id:'Nb_Commentaires',type:'Int'},{id:'Nb_Modifs_Suivies',type:'Int'},{id:'Note',type:'Text'}]]);
+  if(!ids.includes(RT.R))await act(['AddTable',RT.R,[{id:'Dossier',type:'Ref:'+T.D},{id:'Version',type:'Ref:'+RT.V},{id:'Cle',type:'Text'},{id:'Auteur_Texte',type:'Text'},{id:'Relecteur',type:'Ref:'+T.P},{id:'Agent',type:'Ref:'+T.P},{id:'Etape',type:'Text'},{id:'Texte',type:'Text'},{id:'Extrait',type:'Text'},{id:'Type_Erreur',type:'Choice',widgetOptions:JSON.stringify({choices:RTYPES})},{id:'Etat',type:'Choice',widgetOptions:JSON.stringify({choices:['Ouverte','Résolue','Supprimée']})},{id:'Date',type:'DateTime:Europe/Paris'}]]);
+  if(!ids.includes(RT.F)){await act(['AddTable',RT.F,[{id:'Version',type:'Ref:'+RT.V},{id:'Dossier',type:'Ref:'+T.D},{id:'Contenu',type:'Text'},{id:'Taille',type:'Int'}]]);
+    try{const tb=rowsOf(await grist.docApi.fetchTable('_grist_Tables')).find(t=>t.tableId==RT.F);if(tb)await act(['UpdateRecord','_grist_Tables',tb.id,{onDemand:true}])}catch(e){}}}
+async function importRapport(r,bytes){await repTables();await loadRep();const a=actor(),num=(S.repV[r.id]||0)+1;
+  const res=await act(['AddRecord',RT.V,null,{Dossier:r.id,Numero:num,Etape:r.Statut||'',Auteur:a&&a.id?a.id:0,Date:Date.now()/1000,Nb_Commentaires:0,Nb_Modifs_Suivies:0,Note:'Rapport joint à l’envoi en relecture'}]);
+  const vid=res&&res.retValues?res.retValues[0]:null;
+  await act(['AddRecord',RT.F,null,{Version:vid,Dossier:r.id,Contenu:b64(bytes),Taille:bytes.length}]);S.repV[r.id]=num}
+function finish(id){const av=$('avS').value;if(!av)return toast('Choisissez un avis (favorable ou défavorable)',true);
+  if(!$('resS').checked)return toast('Confirmez que les pièces sont sur le réseau',true);
+  const r=S.recs.find(x=>x.id==id),g=r&&r.Retour_Groupement;
+  const go=()=>{const f={Avis:av,Pieces_Reseau:true,Date_Termine_Agent:todayU(),Statut:g?'Relecture chef de groupement':'Relecture chef de service'};
+    if(r&&'Retour_Groupement' in r)f.Retour_Groupement=false;
+    upd(id,f,g?'Renvoyé au chef de groupement':'Envoyé en relecture')};
+  if(S.repV[id])return go();   // le rapport est déjà dans la vue Rapport : rien à importer
+  /* pas encore de rapport : l'agent joint son .odt, qui devient la version 1 */
+  const inp=document.createElement('input');inp.type='file';inp.accept='.odt,application/vnd.oasis.opendocument.text';
+  inp.onchange=async()=>{const fl=inp.files[0];if(!fl)return;
+    if(!/\.odt$/i.test(fl.name))return toast('Choisissez le rapport au format .odt',true);
+    try{toast('Import du rapport…');await importRapport(r,new Uint8Array(await fl.arrayBuffer()));go()}
+    catch(e){console.error(e);toast('Import du rapport impossible : '+(e.message||e),true)}};
+  toast('Choisissez le rapport .odt à envoyer en relecture');inp.click()}
+async function back(id,grp){
+  const t=await ask({title:'Renvoyer à l’agent',label:'Motif du renvoi (obligatoire, visible par l’agent)',ok:'Renvoyer',area:true});if(!t)return;
+  try{await addComRaw(id,'Renvoi à l’agent : '+t,true);
+    const r=S.recs.find(x=>x.id==id),f={Statut:'À reprendre'};if(r&&'Retour_Groupement' in r)f.Retour_Groupement=grp;
+    else if(grp)toast('Colonne Retour_Groupement (Oui/Non) absente : au retour, le dossier repassera par le chef de service',true);
+    await upd(id,f,'Renvoyé à l’agent');await loadComs();renderComs();renderList()}catch(e){toast('Renvoi refusé : '+e.message,true)}}
+function addComRaw(id,t,imp){const a=actor();return act(['AddRecord',T.C,null,{Dossier:id,Auteur:a?a.id:0,Date:Math.floor(Date.now()/1000),Texte:t,Important:!!imp}])}
+async function addCom(id){const el=$('ctxt'),t=el.value.trim();if(!t)return;
+  try{await addComRaw(id,t,$('cimp').checked);el.value='';delete S.draft[id];$('cimp').checked=false;await loadComs();renderComs();renderList();toast('Commentaire publié')}
+  catch(e){toast('Commentaire refusé : '+(e.message||e),true)}}
+
+/* ============ FENÊTRES ============ */
+function openM(h,cls=''){$('mbox').className='mbox '+cls;$('mbox').innerHTML=h;$('modal').classList.add('on')}
+function closeM(){$('modal').classList.remove('on');$('mbox').innerHTML=''}
+function ask({title,label,ok='Valider',area=false}){return new Promise(res=>{
+  openM(`<h2>${title}</h2><label class="lb" for="ask_t">${label}</label>${area?'<textarea id="ask_t" rows="3"></textarea>':'<input id="ask_t">'}<div class="mact"><button class="btn" id="ask_n">Annuler</button><button class="btn p" id="ask_y">${ok}</button></div>`,'sm');
+  const t=$('ask_t');t.focus();const done=v=>{closeM();res(v)};
+  $('ask_n').onclick=()=>done(null);$('ask_y').onclick=()=>{const v=t.value.trim();if(!v){t.focus();return}done(v)}})}
+function sure(msg,ok){return new Promise(res=>{openM(`<h2>Confirmation</h2><p>${msg}</p><div class="mact"><button class="btn" id="c_n">Annuler</button><button class="btn d" id="c_y">${ok}</button></div>`,'sm');
+  $('c_n').onclick=()=>{closeM();res(false)};$('c_y').onclick=()=>{closeM();res(true)}})}
+$('modal').addEventListener('mousedown',e=>{if(e.target.id=='modal'&&!$('mbox').querySelector('#impFile,#itab'))closeM()});
+document.addEventListener('keydown',e=>{if(e.key=='Escape'&&$('modal').classList.contains('on')&&!$('mbox').querySelector('#itab'))closeM()});
+
+$('bNew').onclick=()=>openNew();$('bImp').onclick=()=>openImport();$('bSC').onclick=()=>openSC();
+function openNew(){
+  const o=a=>a.map(x=>`<option value="${esc(x)}">${esc(x||'—')}</option>`).join('');
+  openM(`<h2>Nouveau dossier</h2><div class="mgrid">
+   <div><label class="lb">N° AIRS (laisser vide si DEMAT)</label><input id="n_airs"></div>
+   <div><label class="lb">Ville</label><input id="n_ville"></div>
+   <div><label class="lb">Établissement / nom du dossier</label><input id="n_etab"></div>
+   <div><label class="lb">N° urbanisme (avec M01 si modificatif)</label><input id="n_urb"></div>
+   <div><label class="lb">Nature de l’étude</label><select id="n_nat">${o(['ERP','Habitation','Code du travail'])}</select></div>
+   <div><label class="lb">Catégorie</label><select id="n_cat">${o(['','1','2','3','4','5','5 < 20'])}</select></div>
+   <div><label class="lb">Date d’arrivée au SDIS</label><input type="date" id="n_date" value="${iso(todayU())}"></div>
+   <div><label class="lb">Lien Prevarisc</label><input id="n_lien" placeholder="https://…"></div></div>
+   <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="n_hab"> ERP avec habitation (délai d’un mois)</label>
+   <div class="mact"><button class="btn" onclick="closeM()">Annuler</button><button class="btn p" onclick="saveNew()">Créer le dossier</button></div>`);
+}
+async function saveNew(){const v=i=>$(i).value.trim();
+  const airs=v('n_airs').replace(/\D/g,''),urb=v('n_urb').replace(/\s+/g,'').toUpperCase(),um=urb.match(/M\d{2}$/);
+  const f={Source:airs?'AIRS':'DEMAT',Numero_AIRS:airs,Ville:v('n_ville'),Etablissement:v('n_etab'),Numero_Urbanisme:um?urb.slice(0,-3):urb,Modificatif:um?um[0]:'',
+    Nature:v('n_nat'),Avec_Habitation:$('n_hab').checked,Categorie:v('n_cat'),Date_Arrivee:Date.parse(v('n_date'))/1000,Lien_Prevarisc:v('n_lien'),Statut:'Reçu SAF'};
+  try{await act(['AddRecord',T.D,null,f]);closeM();toast('Dossier créé')}catch(e){toast('Création refusée : '+(e.message||e),true)}}
+function openSC(){
+  const l=Object.values(S.scs).sort((a,b)=>a.Date-b.Date);
+  openM(`<h2>Séances de sous-commission</h2>
+   <div style="display:flex;flex-direction:column;gap:8px">${l.map(s=>`<div class="cm" style="display:flex;justify-content:space-between;align-items:center;margin:0"><span><b>${fd(s.Date)}</b> ${esc(s.Libelle||'')}</span><button class="btn d" onclick="delSC(${s.id})">Supprimer</button></div>`).join('')||'<div class="empty">Aucune date enregistrée.</div>'}</div>
+   <div class="mgrid" style="margin-top:14px"><div><label class="lb">Nouvelle date</label><input type="date" id="sc_d"></div><div><label class="lb">Libellé (facultatif)</label><input id="sc_l"></div></div>
+   <div class="mact"><button class="btn" onclick="closeM()">Fermer</button><button class="btn p" onclick="addSC()">Ajouter la date</button></div>`,'sm');
+}
+async function addSC(){const d=$('sc_d').value;if(!d)return toast('Choisissez une date',true);
+  try{await act(['AddRecord',T.S,null,{Date:Date.parse(d)/1000,Libelle:$('sc_l').value.trim()}]);await loadSC();openSC();renderList();if(S.sel)renderDetail()}catch(e){toast('Refusé : '+e.message,true)}}
+async function delSC(id){if(!await sure('Supprimer cette date de séance ? Les dossiers qui y sont rattachés perdront leur séance.','Supprimer')){openSC();return}
+  try{await act(['RemoveRecord',T.S,id]);await loadSC();openSC();renderList()}catch(e){toast('Refusé : '+e.message,true)}}
+
+
+/* ============ RÉPARATION : dossiers mis en relecture par un import (et non par l'agent) ============ */
+const RELST=['Relecture chef de service','Relecture chef de groupement'];
+const relSeen=()=>{try{return new Set(JSON.parse(localStorage.getItem('relfix_seen')||'[]'))}catch(e){return new Set()}};
+/* « Envoyer en relecture » (agent) exige un avis et ne pose jamais de clé d'import ; l'import pose une clé et date la fin de l'agent à la date d'arrivée faute de mieux */
+const relSure=r=>emptyV(r.Avis)||(r.Date_Termine_Agent&&r.Date_Arrivee&&r.Date_Termine_Agent==r.Date_Arrivee);
+const relSuspects=()=>S.recs.filter(r=>real(r)&&RELST.includes(r.Statut)&&!emptyV(r.Cle_Import));
+function relBanner(w){const a=actor(),seen=relSeen(),L=relSuspects().filter(r=>!seen.has(r.id));
+  if(!L.length||!(isGrp(a)||isChef(a))){w.hidden=true;return}
+  const sure=L.filter(relSure).length;
+  w.hidden=false;w.innerHTML=`${L.length} dossier(s) en relecture proviennent d’un import Prevarisc${sure?`, dont <b>${sure} sans aucun envoi de l’agent</b>`:''} : ils ont pu être placés là automatiquement. <button class="btn p" id="relFix" style="margin-left:8px">Vérifier</button>`;
+  $('relFix').onclick=openRelFix}
+function openRelFix(){const seen=relSeen(),L=relSuspects().filter(r=>!seen.has(r.id)).sort((a,b)=>relSure(b)-relSure(a));
+  openM(`<h2>Dossiers en relecture issus d’un import</h2>
+   <p style="color:var(--mut);margin:0 0 10px">Les dossiers cochés n’ont pas été envoyés en relecture par l’agent (pas d’avis saisi dans Grist, ou date de fin = date d’arrivée). Ils repasseront <b>En cours</b> chez leur agent (ou au service s’il n’y a pas d’agent), avec un commentaire de traçabilité. Les dossiers décochés restent en relecture et ne seront plus signalés.</p>
+   <div class="itw" style="max-height:380px"><table class="itab"><thead><tr><th></th><th>Dossier</th><th>Statut</th><th>Agent</th><th>Avis</th><th>Arrivée</th><th>Fin agent</th></tr></thead><tbody>
+   ${L.map(r=>`<tr><td><input type="checkbox" data-rf="${r.id}" ${relSure(r)?'checked':''}></td><td class="nmc">${esc(r.Nom_Dossier||nomDossier(r))}</td><td>${esc(r.Statut)}</td><td>${esc(nom(r.Agent_Assigne))}</td><td>${esc(r.Avis||'—')}</td><td>${fd(r.Date_Arrivee)}</td><td>${fd(r.Date_Termine_Agent)}</td></tr>`).join('')}</tbody></table></div>
+   <div class="mact"><button class="btn" onclick="closeM()">Plus tard</button><button class="btn p" id="rfGo">Appliquer</button></div>`);
+  $('rfGo').onclick=async()=>{const btn=$('rfGo');btn.disabled=true;btn.textContent='Correction…';
+    const ids=[...document.querySelectorAll('[data-rf]')].filter(x=>x.checked).map(x=>+x.dataset.rf),cols=dcols();
+    try{const ups=ids.map(id=>{const r=S.recs.find(x=>x.id==id),f={Statut:r.Agent_Assigne?'En cours':r.Service_Attribue?'Attribué service':'Reçu SAF'};
+        if(cols.includes('Date_Termine_Agent'))f.Date_Termine_Agent=null;if(cols.includes('Pieces_Reseau'))f.Pieces_Reseau=false;return['UpdateRecord',T.D,id,f]});
+      for(let i=0;i<ups.length;i+=100)await grist.docApi.applyUserActions(ups.slice(i,i+100));
+      if(S.comOk)for(const id of ids)try{await addComRaw(id,'Remis en cours : ce dossier avait été placé en relecture par un import Prevarisc, sans envoi de l’agent.',false)}catch(e){}
+      const seen=relSeen();L.forEach(r=>seen.add(r.id));try{localStorage.setItem('relfix_seen',JSON.stringify([...seen]))}catch(e){}
+      closeM();toast(`${ids.length} dossier(s) remis en cours`)}
+    catch(e){btn.disabled=false;btn.textContent='Appliquer';toast('Correction refusée : '+(e.message||e),true)}}}
+/* ============ IMPORT (export Prevarisc ou CSV simple) ============ */
+const IMP={rows:[],opt:{makeSC:true,done:'Clôturé',pend:'En cours',fix:false,upd:true,mkAg:false,keepAg:true,adv:false}};
+const cleanAgent=t=>String(t||'').replace(/\(+[^)]*\)+/g,' ').replace(/\s+/g,' ').trim();
+function splitName(n){const w=cleanAgent(n).split(' ').filter(Boolean),u=w.filter(x=>x==x.toUpperCase()&&/[A-ZÀ-Ý]/.test(x)),l=w.filter(x=>!u.includes(x));return{nom:(u.join(' ')||w[0]||n).toUpperCase(),prenom:l.join(' ')||(u.length?'':w.slice(1).join(' '))}}
+function openImport(){
+  openM(`<h2>Importer des dossiers</h2>
+   <p style="color:var(--mut);margin:0 0 12px">Déposez l’export Prevarisc (.xls, .xlsx, .ods, .csv) ou un CSV simple. Vous pourrez corriger chaque ligne avant l’import.</p>
+   <label class="drop" id="drop" for="impFile">${ico('up')}<br><b>Choisir un fichier</b> ou le glisser ici<input type="file" id="impFile" accept=".csv,.txt,.xls,.xlsx,.ods" hidden></label>
+   <div class="mact" style="justify-content:space-between"><button class="btn" onclick="dlTemplate()">Télécharger le modèle CSV</button><button class="btn" onclick="closeM()">Annuler</button></div>`);
+  const dr=$('drop');
+  $('impFile').onchange=e=>e.target.files[0]&&handleFile(e.target.files[0]);
+  dr.ondragover=e=>{e.preventDefault();dr.classList.add('on')};dr.ondragleave=()=>dr.classList.remove('on');
+  dr.ondrop=e=>{e.preventDefault();dr.classList.remove('on');e.dataTransfer.files[0]&&handleFile(e.dataTransfer.files[0])};
+}
+function dlTemplate(){const h='Source;Numero_AIRS;Ville;Etablissement;Numero_Urbanisme;Modificatif;Nature;Avec_Habitation;Categorie;Date_Arrivee;Service;Agent;Avis;Lien_Prevarisc\n'+
+  'DEMAT;;BEGLES;RESIDENCE LES GOELANDS;PC0330392600058;;Habitation;non;;30/10/2026;BMET;RAGUES Fabrice;;\n';
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+h],{type:'text/csv'}));a.download='modele-import-dossiers.csv';a.click()}
+function parseCSV(t){t=t.replace(/^﻿/,'');const first=t.split(/\r?\n/,1)[0];
+  const dl=[';','\t',','].map(d=>[d,first.split(d).length]).sort((a,b)=>b[1]-a[1])[0][0];
+  const rows=[];let row=[],cur='',q=false;
+  for(let i=0;i<t.length;i++){const c=t[i];
+    if(q){if(c=='"'){if(t[i+1]=='"'){cur+='"';i++}else q=false}else cur+=c}
+    else if(c=='"')q=true;else if(c==dl){row.push(cur);cur=''}
+    else if(c=='\n'||c=='\r'){if(c=='\r'&&t[i+1]=='\n')i++;row.push(cur);rows.push(row);row=[];cur=''}
+    else cur+=c}
+  if(cur!==''||row.length){row.push(cur);rows.push(row)}
+  return rows.filter(r=>r.some(x=>String(x).trim()!==''))}
+function loadXLSX(){return window.XLSX?Promise.resolve():new Promise((ok,ko)=>{const s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=ok;s.onerror=()=>ko(new Error('bibliothèque Excel inaccessible'));document.head.appendChild(s)})}
+async function handleFile(file){
+  try{let rows;
+    if(/\.(csv|txt)$/i.test(file.name)){const buf=await file.arrayBuffer();let t;
+      try{t=new TextDecoder('utf-8',{fatal:true}).decode(buf)}catch(e){t=new TextDecoder('windows-1252').decode(buf)}rows=parseCSV(t)}
+    else{await loadXLSX();const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});
+      rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:''})}
+    const objs=toObjects(rows);if(!objs.length)throw new Error('aucune ligne trouvée');
+    buildImport(objs);
+  }catch(e){toast('Lecture impossible : '+(e.message||e)+'. Enregistrez le fichier au format CSV et réessayez.',true)}}
+function toObjects(rows){
+  const known=['objetdudossier','ville','etablissement','numerourbanisme','referenceducourrier'];
+  let h=rows.findIndex(r=>r.some(c=>known.includes(norm(c))));if(h<0)h=0;
+  const head=rows[h].map(norm);
+  return rows.slice(h+1).map(r=>{const o={};head.forEach((k,i)=>{if(k)o[k]=typeof r[i]=='number'?r[i]:String(r[i]??'').trim()});return o}).filter(o=>Object.values(o).some(v=>v!==''))}
+function parseDate(v){if(v==null||v==='')return null;
+  if(typeof v=='number')return v>20000&&v<80000?Math.floor(v-25569)*86400:null;
+  const s=String(v).trim();let m;
+  if(m=s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/)){let y=+m[3];if(y<100)y+=2000;return Date.UTC(y,+m[2]-1,+m[1])/1000}
+  if(m=s.match(/^(\d{4})-(\d{2})-(\d{2})/))return Date.UTC(+m[1],+m[2]-1,+m[3])/1000;return null}
+function findAgent(txt){const s=norm(txt);if(!s)return null;const ps=Object.values(S.pers);
+  let m=ps.filter(p=>s==norm(p.NOM+p.Prenom)||s==norm(p.Prenom+p.NOM));if(m.length==1)return m[0];
+  m=ps.filter(p=>s.includes(norm(p.NOM))&&(!p.Prenom||s.includes(norm(p.Prenom))));if(m.length==1)return m[0];
+  m=ps.filter(p=>s.startsWith(norm(p.NOM)));if(m.length==1&&!norm(txt).replace(norm(m[0].NOM),''))return m[0];return null}
+function parseObjet(objet){
+  const lines=String(objet||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  const line=lines.find(l=>(l.match(/\s-\s/g)||[]).length>=2)||lines[0]||'';
+  let parts=line.split(/\s+-\s+/).map(s=>s.trim()).filter(Boolean);
+  const isPermit=s=>/^(PC|AT|DP|PA|PD|CU)[A-Z0-9\/]*$/i.test(s.replace(/\s/g,''));
+  const pi=parts.findIndex((p,i)=>i>0&&isPermit(p)),hasPermit=pi>0;if(hasPermit)parts=parts.slice(0,pi);
+  const isInit=s=>/^[A-Z]{2,3}$/.test(s)||/^(NERP|ERP|NER)$/i.test(s);
+  const isNoise=s=>!/[A-Za-zÀ-ÿ]{3,}/.test(s)||/^#|^ets\b|^n°|^(lieutenant|capitaine|commandant|colonel|adjudant|lt|cdt|cne|cte|cdte|ltn)\b|^objet|doublon|attention/i.test(s)||/\d\s?(er|ère|ere|ème|eme)\b/i.test(s)||/#\d|\?/.test(s)||/^[A-Z]\s?\d/.test(s);
+  const isCity=s=>/^[A-ZÀ-ÖØ-Þ' .\-]{3,32}$/.test(s)&&!isInit(s)&&!isNoise(s);
+  const isAddr=s=>/^\d/.test(s)||/\b(rue|avenue|av\.?|boulevard|bd|chemin|route|all[ée]e|place|impasse|cours|quai|zi|za|lieu[- ]dit|ld|rond[- ]point|esplanade)\b/i.test(s);
+  let ci=-1,etab='';
+  const ai=parts.findIndex((p,i)=>i>0&&isAddr(p));
+  if(hasPermit){
+    const last=parts[parts.length-1]||'';
+    if(parts.length>1&&!isAddr(last)&&!isNoise(last)&&!/\d/.test(last)&&last.length<=32)ci=parts.length-1;
+    else for(let i=parts.length-1;i>=0;i--)if(isCity(parts[i])){ci=i;break}
+    if(ci>0&&!isInit(parts[0])&&!isNoise(parts[0]))etab=parts[0];
+  }else if(ai>0&&!isInit(parts[0])){
+    for(let i=ai+1;i<parts.length;i++){if(/^objet/i.test(parts[i]))break;if(isCity(parts[i])){ci=i;break}}
+    if(ci>0&&!isNoise(parts[0]))etab=parts[0];
+  }else{
+    for(let i=0;i<parts.length;i++){if(/^objet/i.test(parts[i]))break;if(isCity(parts[i])){ci=i;break}}
+    if(ci>=0)for(let i=ci+1;i<parts.length;i++){const p=parts[i];if(isInit(p)||isNoise(p)||isAddr(p)||p.length<4)continue;etab=p;break}
+  }
+  if(ci<0)return{ville:'',etab:'',named:false};
+  return{ville:parts[ci].toUpperCase(),etab:etab.length<70?etab:'',named:hasPermit&&!!etab&&etab.length<70}}
+const edate=(t,m)=>{const d=new Date(t*1000),day=d.getUTCDate(),x=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+m,1)),last=new Date(Date.UTC(x.getUTCFullYear(),x.getUTCMonth()+1,0)).getUTCDate();x.setUTCDate(Math.min(day,last));return x.getTime()/1000};
+function calcEch(r){if(!r.Date_Arrivee)return null;const hab=r.Nature=='Habitation'||r.Nature=='Code du travail'||r.Avec_Habitation;
+  let e=edate(r.Date_Arrivee,hab?1:2);if(r.scDate)e=Math.min(e,r.scDate-14*86400);return e}
+function nomDossier(r){const pre=r.Source=='DEMAT'?'DEMAT':(r.Numero_AIRS||'');let p=String(r.Numero_Urbanisme||'').replace(/\D/g,'').slice(-10);
+  if(p&&r.Modificatif)p+=r.Modificatif;const n=[pre,String(r.Ville||'').toUpperCase(),p,String(r.Etablissement||'').toUpperCase()].filter(Boolean).join(' ');return r.Avis=='Défavorable'?n+' - DEF':n}
+/* ---- clés d'identification : stables même si le dossier est renommé, réassigné ou traité ---- */
+const iso8=t=>t?new Date(t*1000).toISOString().slice(0,10):'';
+const pKey=(urbRaw,courrier,isoD,objet)=>{let u=String(urbRaw||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(!u||/^(AT|PC|DP|PA|PD|CU)$/.test(u))u='NOURB:'+norm(objet).slice(0,25);
+  return u+'|'+String(courrier||'').trim().toUpperCase()+'|'+isoD};
+const exP=r=>r.Cle_Import?String(r.Cle_Import):pKey((r.Numero_Urbanisme||'')+(r.Modificatif||''),r.Numero_Courrier,iso8(r.Date_Arrivee),r.Objet);
+const mkRec=(r,byDate)=>{const tr=TREATED.includes(r.Statut);return{Source:r.Source,Numero_AIRS:r.Numero_AIRS,Numero_Courrier:r.Numero_Courrier,Ville:r.Ville,Etablissement:r.Etablissement,
+      Numero_Urbanisme:r.Numero_Urbanisme,Modificatif:r.Modificatif,Nature:r.Nature,Avec_Habitation:!!r.Avec_Habitation,Categorie:r.Categorie,Type_ERP:r.Type_ERP||'',Date_Arrivee:r.Date_Arrivee,
+      Service_Attribue:r.Service_Attribue,Agent_Assigne:(tr||IMP.opt.keepAg)&&r.agent||0,Statut:r.Statut,Avis:r.Avis,Avis_Commission:r.Avis_Commission||'',Sous_Commission:r.scDate?(byDate[r.scDate]||0):0,
+      Lien_Prevarisc:r.Lien_Prevarisc,Objet:r.Objet,Nb_Derogations:r.Nb_Derogations||0,Nb_Demandes_Avis:r.Nb_Demandes_Avis||0,Cle_Import:r.P,Code_Etab:r.Code_Etab||'',
+      Date_Attribution_Agent:(tr||IMP.opt.keepAg)&&r.agent?r.Date_Arrivee:null,Date_Termine_Agent:tr?(r.dAvis||r.dRep||r.Date_Arrivee):null,
+      Date_Cloture:r.Statut=='Clôturé'?(r.dRep||r.dAvis||r.Date_Arrivee):null,Pieces_Reseau:tr}};
+
+const FILLC=['Numero_Courrier','Source','Numero_AIRS','Ville','Etablissement','Numero_Urbanisme','Modificatif','Nature','Categorie','Type_ERP','Date_Arrivee','Service_Attribue','Avis','Avis_Commission','Lien_Prevarisc','Objet','Cle_Import','Code_Etab','Sous_Commission','Date_Attribution_Agent','Date_Termine_Agent','Date_Cloture'];
+const isLegacy=r=>!r.Cle_Import&&!r.Date_Arrivee;
+const emptyV=v=>v==null||v===''||v===0||v===false;
+const byDateNow=()=>{const o={};Object.values(S.scs).forEach(x=>o[x.Date]=x.id);return o};
+/* compléter : ne remplit QUE les champs vides. Une saisie faite dans Grist (statut, agent, établissement, avis…) n'est jamais remplacée. */
+const RANK={};STAGES.forEach((x,i)=>RANK[x.st]=i);
+/* avancer le statut : seulement sur option, seulement vers l'avant, seulement si le dossier n'a pas encore été commencé dans Grist, jamais vers une relecture */
+const statusMove=(r,n)=>!!(IMP.opt.adv&&r.match&&EARLY.includes(r.match.Statut||'Reçu SAF')&&['Attribué service','En attente agent','Clôturé'].includes(n.Statut)&&(RANK[n.Statut]>RANK[r.match.Statut||'Reçu SAF']));
+/* champs liés à l'avancement : remplis seulement s'ils sont cohérents avec le statut actuel dans Grist (l'avis reste celui que l'agent saisit en terminant) */
+const DATEC={Date_Cloture:e=>e.Statut=='Clôturé',Date_Termine_Agent:e=>TREATED.includes(e.Statut),Date_Attribution_Agent:e=>!!e.Agent_Assigne,Avis:e=>TREATED.includes(e.Statut)};
+function fillOf(r){const e=r.match,cols=dcols(),n=mkRec(r,byDateNow()),out={};if(!e)return out;
+  FILLC.forEach(c=>{if(cols.includes(c)&&emptyV(e[c])&&!emptyV(n[c])&&(!DATEC[c]||DATEC[c](e)))out[c]=n[c]});
+  /* agent de Prevarisc : seulement si aucun agent n'est déjà attribué dans Grist */
+  if(IMP.opt.keepAg&&cols.includes('Agent_Assigne')&&n.Agent_Assigne&&!e.Agent_Assigne&&EARLY.includes(e.Statut||'Reçu SAF')){
+    out.Agent_Assigne=n.Agent_Assigne;if(e.Statut!='En attente agent'&&cols.includes('Statut'))out.Statut='En attente agent';
+    if(cols.includes('Date_Attribution_Agent')&&emptyV(e.Date_Attribution_Agent))out.Date_Attribution_Agent=n.Date_Attribution_Agent||todayU()}
+  if(statusMove(r,n)&&cols.includes('Statut')){out.Statut=n.Statut;
+    if(n.Statut=='Clôturé'&&cols.includes('Date_Cloture')&&emptyV(e.Date_Cloture))out.Date_Cloture=n.Date_Cloture}
+  /* option explicite (décochée par défaut) : rouvrir un dossier clôturé dans Grist sans avis de commission */
+  if(fixCase(r)&&cols.includes('Statut')){out.Statut=n.Statut;if(cols.includes('Date_Cloture'))out.Date_Cloture=null}
+  return out}
+function setUpd(r){r.fill=r.match?fillOf(r):{};r.upd=!!r.match&&Object.keys(r.fill).length>0}
+const EARLY=['Reçu SAF','Attribué service','En attente agent'];
+const TREATED=['Relecture chef de service','Relecture chef de groupement','Retour SAF','Clôturé'];
+/* règle de statut : établissement renommé + agent (ou avis, ou réponse) = traité ; BMET/PMET + agent = en attente */
+/* traité par l'agent (nom renommé, agent, avis ou réponse) mais sans avis de commission : pas clôturé */
+const isPend=(r,ag)=>!r.Avis_Commission&&r.realName&&!!(ag||r.agent||r.Avis||r.dRep);
+function computeStatus(r){
+  const ag=r.agent||(IMP.opt.mkAg&&r.agentTxt);
+  if(IMP.opt.done!='none'&&r.Avis_Commission)return IMP.opt.done;
+  if(isPend(r,ag)){if(!r.Avis&&!r.dRep)return 'En cours';   /* nom renommé + agent, mais pas d'avis : instruction en cours */
+    if(IMP.opt.pend!='none')return IMP.opt.pend}
+  if(r.ph=='BMET'||r.ph=='PMET')return ag&&IMP.opt.keepAg?'En attente agent':'Attribué service';
+  return 'Reçu SAF'}
+const defStat=computeStatus;
+const fixCase=r=>!!(IMP.opt.fix&&r.match&&r.match.Statut=='Clôturé'&&emptyV(r.match.Avis_Commission)&&r.Statut!='Clôturé');
+const updEligible=r=>!!r.match&&(fixCase(r)||EARLY.includes(r.match.Statut)&&((r.Statut=='Clôturé'&&r.match.Statut!='Clôturé')||(r.match.Statut=='Reçu SAF'&&['Attribué service','En attente agent'].includes(r.Statut))));
+
+function fromPrevarisc(o){
+  const fl=[],g=k=>String(o[k]??'').trim();
+  const courrier=g('referenceducourrier'),objet=g('objetdudossier'),lib=g('libelleetablissement'),code=g('codeidentifiantetablissement'),genre=g('genre');
+  let urb=g('numerodocumenturbanisme').replace(/\s+/g,''),mod='';
+  const m=urb.match(/M\d{2}$/i);if(m){mod=m[0].toUpperCase();urb=urb.slice(0,-3)}
+  if(/^[A-Z]{1,4}\/?$/i.test(urb))urb='';
+  if(!urb)fl.push('N° d’urbanisme absent');
+  /* BMET / PMET = nom provisoire (qualifié service) ; COURRIER… / GPRIU = pas encore qualifié ; autre = établissement renommé, donc traité */
+  const ph=/^(BMET|PMET)$/i.test(lib)?lib.toUpperCase():(!lib||/^COURRIER|^GPRIU\b/i.test(lib)?'SAF':'');
+  const dem=/^DEMAT/i.test(courrier);
+  const toks=(courrier+' '+(ph=='SAF'?lib:'')).toUpperCase().replace(/NON\s+ERP/g,'NERP').split(/[^A-Z]+/).filter(Boolean);
+  const nerp=toks.includes('NERP')||toks.includes('NER'),erp=toks.includes('ERP');
+  let nature='ERP',hab=false;
+  if(/code du travail/i.test(objet))nature='Code du travail';
+  else if(genre=='Habitation')nature='Habitation';
+  else if(/^AT/i.test(urb)||/autorisation de travaux/i.test(g('naturedudossier'))){}
+  else if(erp&&nerp)hab=true;else if(erp){}else if(nerp)nature='Habitation';else if(!ph&&genre){}else fl.push('Nature à confirmer');
+  const po=parseObjet(objet),ville=(g('commune')||po.ville).toUpperCase();if(!ville)fl.push('Ville introuvable');
+  const agTxt=cleanAgent(g('preventionnisteenchargedudossier')),ag=findAgent(agTxt);
+  const av=/d[ée]favorable/i.test(g('avisrapporteur'))?'Défavorable':/favorable/i.test(g('avisrapporteur'))?'Favorable':'';
+  const avC=/d[ée]favorable/i.test(g('aviscommission'))?'Défavorable':/favorable/i.test(g('aviscommission'))?'Favorable':'';
+  const cm=g('categorie').match(/[1-5]/);let categorie=cm?cm[0]:'';
+  if(categorie=='5'&&/<\s?20|moins de 20/i.test(objet+' '+lib))categorie='5 < 20';
+  const dm=objet.match(/(\d+)\s*(?:demandes?\s*(?:de\s*)?)?d[ée]rogations?/i),dg=dm?+dm[1]:(/d[ée]rogation/i.test(objet)?1:0);
+  const am=objet.match(/(\d+)\s*demandes?\s*d['’]avis/i),dv=am?+am[1]:(/demandes?\s*d['’]avis/i.test(objet)?1:0);
+  if(dg||dv)fl.push('Dérogation ou demande d’avis détectée dans l’objet : à confirmer');
+  const r={Source:dem?'DEMAT':'AIRS',Numero_AIRS:dem?'':courrier.replace(/\D/g,''),Numero_Courrier:courrier,Ville:ville,Etablissement:ph?'':lib,
+    Numero_Urbanisme:urb,Modificatif:mod,Nature:nature,Avec_Habitation:hab,Categorie:categorie,Type_ERP:g('type'),Date_Arrivee:parseDate(o.datedecreationdudossier),
+    Service_Attribue:(ph=='BMET'||ph=='PMET')?ph:(ag&&['BMET','PMET','Chargé de mission'].includes(ag.Service)?ag.Service:''),
+    agent:ag?ag.id:0,agentTxt:agTxt,Avis:av,Avis_Commission:avC,scDate:parseDate(o.datedelacommissionensalle),Objet:objet.slice(0,1500),Lien_Prevarisc:'',
+    Nb_Derogations:dg,Nb_Demandes_Avis:dv,ph,realName:!ph,dAvis:parseDate(o.dateavisrapporteur),dRep:parseDate(o.datereponse),Code_Etab:code};
+  r.Statut=computeStatus(r);r.autoSt=true;r.fl=fl;r.created=iso8(r.Date_Arrivee);r.P=pKey(urb+mod,courrier,r.created,objet);return r}
+
+function fromSimple(o){
+  const fl=[],g=k=>String(o[k]??'').trim();let urb=g('numerourbanisme').replace(/\s+/g,''),mod=g('modificatif').toUpperCase();
+  const m=urb.match(/M\d{2}$/i);if(m&&!mod){mod=m[0].toUpperCase();urb=urb.slice(0,-3)}
+  const agTxt=cleanAgent(g('agent')),ag=findAgent(agTxt);
+  let nat=['ERP','Habitation','Code du travail'].find(x=>norm(x)==norm(g('nature')))||'';if(!nat){nat='ERP';fl.push('Nature à confirmer')}
+  let sv=g('service');const ph=/^(BMET|PMET)$/i.test(sv)?sv.toUpperCase():'SAF';
+  if(/^charg/i.test(sv))sv='Chargé de mission';else if(ph!='SAF')sv=ph;else sv=ag&&['BMET','PMET','Chargé de mission'].includes(ag.Service)?ag.Service:'';
+  const r={Source:/airs/i.test(g('source'))?'AIRS':'DEMAT',Numero_AIRS:g('numeroairs'),Numero_Courrier:'',Ville:g('ville').toUpperCase(),Etablissement:g('etablissement'),Numero_Urbanisme:urb,Modificatif:mod,Nature:nat,
+    Avec_Habitation:/^(1|oui|true|x|vrai)$/i.test(g('avechabitation')),Categorie:g('categorie'),Type_ERP:'',Date_Arrivee:parseDate(o.datearrivee)||todayU(),Service_Attribue:sv,
+    agent:ag?ag.id:0,agentTxt:agTxt,Avis:/d[ée]f/i.test(g('avis'))?'Défavorable':/fav/i.test(g('avis'))?'Favorable':'',Avis_Commission:'',scDate:null,Objet:'',Lien_Prevarisc:g('lienprevarisc'),
+    Nb_Derogations:0,Nb_Demandes_Avis:0,ph,realName:false,Code_Etab:''};
+  if(!r.Ville)fl.push('Ville manquante');
+  r.Statut=g('statut')||computeStatus(r);r.autoSt=!g('statut');r.fl=fl;r.created=iso8(r.Date_Arrivee);r.P=pKey(urb+mod,'',r.created,r.Etablissement);return r}
+
+function buildImport(objs){
+  IMP.prev='objetdudossier' in objs[0]||'libelleetablissement' in objs[0];
+  IMP.rows=objs.map(IMP.prev?fromPrevarisc:fromSimple);matchImport();renderImport()}
+/* doublons : clé stable (permis + courrier + date). Si un même permis porte plusieurs établissements, on départage par le code établissement. */
+function matchImport(){
+  const R=IMP.rows,ex={},seen=new Set(),grp={};
+  S.recs.forEach(r=>{if(!real(r))return;const p=exP(r);(ex[p]=ex[p]||[]).push(r)});
+  R.forEach(r=>{r.dup='';r.match=null;r.upd=false;const d=r.P+'|'+(r.Code_Etab||'');
+    if(seen.has(d))r.dup='Doublon dans le fichier';seen.add(d);if(!r.dup)(grp[r.P]=grp[r.P]||[]).push(r)});
+  Object.keys(grp).forEach(P=>{const E=(ex[P]||[]).slice(),I=grp[P];
+    I.forEach(r=>{const i=r.Code_Etab?E.findIndex(e=>(e.Code_Etab||'')==r.Code_Etab):-1;if(i>=0)r.match=E.splice(i,1)[0]});
+    I.filter(r=>!r.match).forEach(r=>{if(E.length)r.match=E.shift()})});
+  /* ancien import (sans date ni clé) : rapprochement par n° d'urbanisme, puis établissement ou AIRS */
+  const used=new Set(R.filter(r=>r.match).map(r=>r.match.id)),LG={};
+  S.recs.filter(e=>real(e)&&isLegacy(e)&&!used.has(e.id)).forEach(e=>{const u=String((e.Numero_Urbanisme||'')+(e.Modificatif||'')).toUpperCase().replace(/[^A-Z0-9]/g,'');(LG[u||'?'+norm(e.Etablissement)]=LG[u||'?'+norm(e.Etablissement)]||[]).push(e)});
+  R.filter(r=>!r.match&&!r.dup).forEach(r=>{const u=r.P.split('|')[0],k=u.startsWith('NOURB:')?'?'+norm(r.Etablissement):u,C=LG[k];if(!C||!C.length||k=='?')return;
+    let i=C.findIndex(e=>norm(e.Etablissement)&&norm(e.Etablissement)==norm(r.Etablissement));
+    if(i<0)i=C.findIndex(e=>e.Numero_AIRS&&e.Numero_AIRS==r.Numero_AIRS);
+    if(i<0){if(C.length>1)return;i=0}   /* plusieurs candidats sans indice commun : on ne devine pas */
+    r.match=C.splice(i,1)[0];r.legacy=true});
+  R.forEach(r=>{if(r.match){r.dup='Déjà dans Grist';setUpd(r)}r.on=!r.dup})}
+
+function renderImport(){
+  const R=IMP.rows,today=todayU();
+  const nNew=R.filter(r=>r.on).length,nDup=R.filter(r=>r.dup=='Déjà dans Grist').length,nFile=R.filter(r=>r.dup=='Doublon dans le fichier').length,nUpd=R.filter(r=>r.upd).length,nLeg=R.filter(r=>r.legacy&&r.upd).length;
+  const dist={};R.filter(r=>r.on).forEach(r=>dist[r.Statut]=(dist[r.Statut]||0)+1);
+  const unk={};R.filter(r=>r.on||r.upd).forEach(r=>{if(r.agentTxt&&!r.agent)unk[r.agentTxt]=(unk[r.agentTxt]||0)+1});
+  const unkL=Object.entries(unk).sort((a,b)=>b[1]-a[1]),unkN=unkL.reduce((a,x)=>a+x[1],0);
+  const newSC=[...new Set(R.filter(r=>r.on&&r.scDate&&!Object.values(S.scs).some(s=>s.Date==r.scDate)).map(r=>r.scDate))];
+  const agents=Object.values(S.pers).filter(p=>roleN(p)==4).sort((a,b)=>a.NOM.localeCompare(b.NOM));
+  const sts=STAGES.map(s=>s.st),nCom=R.filter(r=>r.Avis_Commission&&r.on).length,nPend=R.filter(r=>r.on&&isPend(r,r.agent)&&(r.Avis||r.dRep)).length,nFix=R.filter(r=>r.match&&r.match.Statut=='Clôturé'&&emptyV(r.match.Avis_Commission)&&!r.Avis_Commission&&r.realName&&isPend(r,r.agent)).length;
+  const nAdv=R.filter(r=>{if(!r.match)return false;const o=IMP.opt.adv;IMP.opt.adv=true;const m=statusMove(r,mkRec(r,byDateNow()));IMP.opt.adv=o;return m}).length;
+  const vis=[];R.forEach((r,i)=>{if(R.length<=300||(r.fl.length&&!r.dup))vis.push(i)});const shownI=vis.slice(0,300);
+  const cols=dcols(),miss=['Cle_Import','Code_Etab'].filter(c=>cols.length&&!cols.includes(c));
+  openM(`<h2>Vérifier avant d’importer</h2>
+   <div class="sumrow"><span class="pill" style="--c:var(--cours)">${R.length} lignes lues</span><span class="pill" style="--c:var(--svc)" id="s_ok">${nNew} nouveaux</span>
+    <span class="pill" style="--c:var(--clos)">${nDup} déjà dans Grist</span>${nFile?`<span class="pill" style="--c:var(--clos)">${nFile} doublons dans le fichier</span>`:''}
+    ${nUpd?`<span class="pill" style="--c:var(--soon)">${nUpd} à compléter ou mettre à jour</span>`:''}</div>
+   <div class="chips">${Object.entries(dist).sort((a,b)=>b[1]-a[1]).map(([s,n])=>`<span class="pill" data-k="${KOF[s]||'saf'}">${esc(s)} · ${n}</span>`).join('')}</div>
+   ${miss.length?`<div class="note" style="margin:0 0 8px;color:var(--soon)">Ajoutez dans Dossiers les colonnes <b>${miss.join('</b> et <b>')}</b> (Texte) : elles rendent la détection des doublons fiable même si un dossier est renommé.</div>`:''}
+   ${IMP.prev?`<div class="note" style="margin:0 0 8px">Établissement encore nommé BMET ou PMET : qualifié service, pas encore traité. Établissement renommé : dossier traité par l’agent. Seul un dossier avec un avis de commission est clôturé ; « Date avis rapporteur » donne la fin de l’agent.</div>`:''}
+   ${R.length>300?`<div class="note" style="margin:0 0 8px">Gros fichier : seules les lignes à vérifier sont listées (${shownI.length} sur ${vis.length}). Les autres sont importées telles quelles.</div>`:''}
+   <div class="itw"><table class="itab" id="itab"><thead><tr><th></th><th>Nom du dossier (calculé) et remarques</th><th>Ville</th><th>Établissement</th><th>Nature</th><th>Service</th><th>Agent</th><th>Statut</th><th>Arrivée</th><th>Reste</th></tr></thead><tbody>
+   ${shownI.map(i=>{const r=R[i];return `<tr data-i="${i}" class="${r.on?'':'off'}"><td><input type="checkbox" data-c="on" ${r.on?'checked':''}></td>
+    <td class="nmc"><span id="nm${i}">${esc(nomDossier(r))}</span>${(r.dup||r.fl.length)?`<div class="fl ${r.dup?'dup':''}">${esc(r.dup||r.fl.join(' · '))}${r.upd?' · sera complété : '+esc(Object.keys(r.fill).map(k=>k.replace(/_/g,' ')).join(', ')):''}</div>`:''}</td>
+    <td><input data-c="Ville" value="${esc(r.Ville)}" class="${r.Ville?'':'warn'}"></td><td><input data-c="Etablissement" value="${esc(r.Etablissement)}" title="${esc(r.Objet)}"></td>
+    <td><select data-c="Nature">${['ERP','Habitation','Code du travail'].map(o=>`<option ${o==r.Nature?'selected':''}>${o}</option>`).join('')}</select></td>
+    <td><select data-c="Service_Attribue">${['','BMET','PMET','Chargé de mission'].map(o=>`<option ${o==r.Service_Attribue?'selected':''}>${o}</option>`).join('')}</select></td>
+    <td><select data-c="agent"><option value="0">${r.agentTxt&&!r.agent?'? '+esc(r.agentTxt):'—'}</option>${agents.map(p=>`<option value="${p.id}" ${p.id==r.agent?'selected':''}>${esc(p.NOM)}</option>`).join('')}</select></td>
+    <td><select data-c="Statut">${sts.map(o=>`<option ${o==r.Statut?'selected':''}>${o}</option>`).join('')}</select></td>
+    <td>${fd(r.Date_Arrivee)}</td><td id="rs${i}">${resteTxt(r,today)}</td></tr>`}).join('')}</tbody></table></div>
+   <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">
+    ${IMP.prev?`<label style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${nCom} dossiers ont un <b>avis de commission</b> : les classer en
+     <select id="o_done" style="border:1px solid var(--line);border-radius:10px;padding:5px 10px;background:var(--soft)">${[['Clôturé','Clôturé'],['Retour SAF','Retour SAF'],['none','Ne pas les distinguer']].map(o=>`<option value="${o[0]}" ${o[0]==IMP.opt.done?'selected':''}>${o[1]}</option>`).join('')}</select></label>
+     <label style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${nPend} dossiers traités par l’agent <b>sans avis de commission</b> (avis rapporteur rendu, pas clôturés) : les classer en
+     <select id="o_pend" style="border:1px solid var(--line);border-radius:10px;padding:5px 10px;background:var(--soft)">${[['Relecture chef de service','Relecture chef de service'],['Relecture chef de groupement','Relecture chef de groupement'],['En cours','En cours'],['Retour SAF','Retour SAF'],['none','Ne pas les distinguer']].map(o=>`<option value="${o[0]}" ${o[0]==IMP.opt.pend?'selected':''}>${o[1]}</option>`).join('')}</select></label>
+     ${nFix?`<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="o_fix" ${IMP.opt.fix?'checked':''} style="margin-top:3px"><span>${nFix} dossiers déjà <b>clôturés dans Grist sans avis de commission</b> : les remettre au statut ci-dessus.</span></label>`:''}`:''}
+    <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="o_keep" ${IMP.opt.keepAg?'checked':''} style="margin-top:3px"><span>Reprendre le préventionniste de Prevarisc : les dossiers BMET/PMET avec un préventionniste passent en « En attente agent ». Pour un dossier déjà présent, l’agent n’est repris <b>que si aucun agent n’a été attribué dans Grist</b>. Décochez pour qu’ils restent au niveau du chef de service.</span></label>
+    ${nUpd?`<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="o_upd" ${IMP.opt.upd?'checked':''} style="margin-top:3px"><span>Compléter les ${nUpd} dossiers déjà présents : uniquement les champs <b>vides</b> (dates, ville, catégorie…). Le statut, l’agent et tout ce qui a été saisi dans Grist ne sont <b>jamais</b> remplacés.</span></label>`:''}
+    ${nAdv?`<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="o_adv" ${IMP.opt.adv?'checked':''} style="margin-top:3px"><span>${nAdv} dossiers <b>pas encore commencés dans Grist</b> ont avancé dans Prevarisc (service qualifié, agent ou avis de commission) : faire avancer leur statut. Jamais vers une relecture, jamais en arrière.</span></label>`:''}
+    ${unkL.length?`<label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="o_mk" ${IMP.opt.mkAg?'checked':''} style="margin-top:3px"><span>Créer dans Personnel les ${unkL.length} préventionnistes inconnus (${unkN} dossiers), en service « Hors GPREV », sans mail, pour qu’ils apparaissent dans les statistiques.<br><span style="color:var(--mut);font-size:12.5px">${unkL.slice(0,8).map(x=>esc(x[0])+' ('+x[1]+')').join(', ')}${unkL.length>8?'…':''}</span></span></label>`:''}
+    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="o_sc" ${IMP.opt.makeSC?'checked':''}> Créer les ${newSC.length} date(s) de séance absentes de la liste</label></div>
+   <div class="mact"><button class="btn" onclick="closeM()">Annuler</button><button class="btn" onclick="openImport()">Choisir un autre fichier</button><button class="btn p" id="goImp">${ico('up')}Importer <span id="s_n">${nNew}</span> dossier(s)</button></div>`);
+  $('itab').addEventListener('input',onImpEdit);$('itab').addEventListener('change',onImpEdit);
+  const redo=()=>{IMP.rows.forEach(r=>{if(r.autoSt)r.Statut=computeStatus(r);if(r.match)setUpd(r)});renderImport()};
+  $('o_sc').onchange=e=>{IMP.opt.makeSC=e.target.checked};
+  if($('o_done'))$('o_done').onchange=e=>{IMP.opt.done=e.target.value;redo()};
+  if($('o_pend'))$('o_pend').onchange=e=>{IMP.opt.pend=e.target.value;redo()};
+  if($('o_fix'))$('o_fix').onchange=e=>{IMP.opt.fix=e.target.checked;redo()};
+  $('o_keep').onchange=e=>{IMP.opt.keepAg=e.target.checked;redo()};
+  if($('o_upd'))$('o_upd').onchange=e=>{IMP.opt.upd=e.target.checked};
+  if($('o_adv'))$('o_adv').onchange=e=>{IMP.opt.adv=e.target.checked;redo()};
+  if($('o_mk'))$('o_mk').onchange=e=>{IMP.opt.mkAg=e.target.checked;redo()};
+  $('goImp').onclick=commitImport;
+}
+function resteTxt(r,today){const e=calcEch(r);if(e==null)return '—';const j=Math.round((e-today)/86400);return j<0?`<b style="color:var(--late)">${-j} j de retard</b>`:j+' j'}
+function onImpEdit(e){const c=e.target.dataset.c;if(!c)return;const tr=e.target.closest('tr'),i=+tr.dataset.i,r=IMP.rows[i];
+  if(c=='on'){r.on=e.target.checked;tr.classList.toggle('off',!r.on)}
+  else if(c=='agent'){r.agent=+e.target.value;if(r.autoSt){r.Statut=computeStatus(r);tr.querySelector('[data-c=Statut]').value=r.Statut}}
+  else if(c=='Statut'){r.Statut=e.target.value;r.autoSt=false}
+  else{r[c]=e.target.value;if(c=='Service_Attribue'&&(r.ph=='SAF'||!r.ph)){}
+    if(e.target.tagName=='INPUT')e.target.classList.toggle('warn',c=='Ville'&&!e.target.value.trim())}
+  if($('nm'+i))$('nm'+i).textContent=nomDossier(r);if($('rs'+i))$('rs'+i).innerHTML=resteTxt(r,todayU());
+  const n=IMP.rows.filter(x=>x.on).length;$('s_ok').textContent=n+' nouveaux';$('s_n').textContent=n}
+
+async function commitImport(){
+  const R=IMP.rows,NEW=R.filter(r=>r.on),UPD=IMP.opt.upd?R.filter(r=>r.upd&&r.match&&!r.on):[];
+  if(!NEW.length&&!UPD.length)return toast('Rien à importer',true);
+  const btn=$('goImp');btn.disabled=true;btn.textContent='Import en cours…';
+  try{
+    const avail=Object.keys(await grist.docApi.fetchTable(T.D));
+    let nAg=0;
+    if(IMP.opt.mkAg){
+      const names=[...new Set(NEW.concat(UPD).filter(r=>r.agentTxt&&!r.agent).map(r=>r.agentTxt))];
+      if(names.length){const pa=Object.keys(await grist.docApi.fetchTable(T.P));
+        const rows=names.map(n=>{const x=splitName(n);return{NOM:x.nom,Prenom:x.prenom,Service:'Hors GPREV',Role_hierarchique:4}});
+        const cols=Object.keys(rows[0]).filter(c=>pa.includes(c)),o={};cols.forEach(c=>o[c]=rows.map(x=>x[c]));
+        await act(['BulkAddRecord',T.P,rows.map(()=>null),o]);nAg=names.length;
+        S.pers={};rowsOf(await grist.docApi.fetchTable(T.P)).forEach(p=>S.pers[p.id]=p);
+        NEW.concat(UPD).forEach(r=>{if(r.agentTxt&&!r.agent){const p=findAgent(r.agentTxt);if(p)r.agent=p.id}})}}
+    if(IMP.opt.makeSC){
+      const miss=[...new Set(NEW.concat(UPD).filter(r=>r.scDate&&!Object.values(S.scs).some(s=>s.Date==r.scDate)).map(r=>r.scDate))].sort();
+      if(miss.length){await act(['BulkAddRecord',T.S,miss.map(()=>null),{Date:miss,Libelle:miss.map(()=>'Commission départementale')}]);await loadSC()}}
+    const byDate={};Object.values(S.scs).forEach(s=>byDate[s.Date]=s.id);
+    const mk=r=>mkRec(r,byDate);
+    let ign=[];
+    if(NEW.length){const recs=NEW.map(mk),all=Object.keys(recs[0]),cols=all.filter(c=>avail.includes(c));
+      ign=all.filter(c=>!avail.includes(c)&&recs.some(x=>x[c]));
+      for(let i=0;i<recs.length;i+=100){const ch=recs.slice(i,i+100),o={};cols.forEach(c=>o[c]=ch.map(x=>x[c]));await act(['BulkAddRecord',T.D,ch.map(()=>null),o])}}
+    if(UPD.length){UPD.forEach(setUpd);const L=UPD.filter(r=>r.upd);
+      for(let i=0;i<L.length;i+=100){const ch=L.slice(i,i+100).map(r=>['UpdateRecord',T.D,r.match.id,r.fill]);await grist.docApi.applyUserActions(ch)}UPD.length=0;UPD.push(...L)}
+    closeM();
+    toast(`${NEW.length} créés${UPD.length?' · '+UPD.length+' mis à jour':''}${nAg?' · '+nAg+' agents ajoutés':''}${ign.length?' · colonnes absentes ignorées : '+ign.join(', '):''}`);
+  }catch(e){btn.disabled=false;btn.textContent='Réessayer l’import';toast('Import refusé : '+(e.message||e),true)}}
+
+/* ============ STATISTIQUES PAR AGENT ============ */
+const STCOLS=[['todo','À faire'],['att','En attente'],['done','Traités'],['fav','Favorables'],['def','Défavorables'],['der','Dérogations'],['dem','Demandes d’avis'],['erp','ERP'],['hab','Habitation'],['ct','Code du travail'],['c1','Cat. 1'],['c2','Cat. 2'],['c3','Cat. 3'],['c4','Cat. 4'],['c5','Cat. 5'],['c5m','5 < 20']];
+function statData(){
+  const t=todayU(),d=new Date(t*1000),y=d.getUTCFullYear(),mo=d.getUTCMonth();
+  const from={year:Date.UTC(y,0,1)/1000,month:Date.UTC(y,mo,1)/1000,d30:t-30*86400,all:0}[S.sp||'year'];
+  const z=()=>({todo:0,att:0,done:0,fav:0,def:0,der:0,dem:0,erp:0,hab:0,ct:0,c1:0,c2:0,c3:0,c4:0,c5:0,c5m:0}),by={},tot=z();
+  pool().forEach(r=>{const k=gkey(r),o=by[k]=by[k]||z(),st=r.Statut;
+    if(ACTIVE.includes(st)){o.todo++;tot.todo++;if(st=='En attente agent'){o.att++;tot.att++}}
+    if(TREATED.includes(st)){const dt=r.Date_Termine_Agent||r.Date_Cloture||r.Date_Arrivee||0;if(!from||dt>=from)[o,tot].forEach(x=>{x.done++;
+      if(r.Avis=='Favorable')x.fav++;else if(r.Avis=='Défavorable')x.def++;x.der+=r.Nb_Derogations||0;x.dem+=r.Nb_Demandes_Avis||0;
+      if(r.Nature=='ERP')x.erp++;else if(r.Nature=='Habitation')x.hab++;else if(r.Nature=='Code du travail')x.ct++;
+      const c=r.Categorie;if(c=='1')x.c1++;else if(c=='2')x.c2++;else if(c=='3')x.c3++;else if(c=='4')x.c4++;else if(c=='5')x.c5++;else if(c=='5 < 20')x.c5m++})}});
+  const rows=Object.keys(by).map(k=>({k,label:glabel(k),o:by[k]})).sort((a,b)=>b.o.done-a.o.done||b.o.todo-a.o.todo);
+  return{rows,tot}}
+function openStats(){S.sp=S.sp||'year';drawStats()}
+function drawStats(){
+  const{rows,tot}=statData();
+  openM(`<h2>Statistiques par agent</h2>
+   <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><label for="sp">Dossiers traités sur</label>
+    <select id="sp" style="width:auto;flex:none;border:1px solid var(--line);border-radius:10px;padding:6px 10px;background:var(--soft)">${[['year','l’année en cours'],['month','le mois en cours'],['d30','les 30 derniers jours'],['all','toute la période']].map(o=>`<option value="${o[0]}" ${o[0]==S.sp?'selected':''}>${o[1]}</option>`).join('')}</select>
+    <button class="btn" id="stCsv">Exporter en CSV</button></div>
+   <div class="itw"><table class="itab"><thead><tr><th>Agent</th>${STCOLS.map(c=>`<th class="num">${c[1]}</th>`).join('')}</tr></thead><tbody>
+   ${rows.map(r=>`<tr><td><b>${esc(r.label)}</b></td>${STCOLS.map(c=>`<td class="num">${r.o[c[0]]||'·'}</td>`).join('')}</tr>`).join('')}
+   <tr style="font-weight:700"><td>Total</td>${STCOLS.map(c=>`<td class="num">${tot[c[0]]}</td>`).join('')}</tr></tbody></table></div>
+   <div class="note">Traités = dossiers passés en relecture, retour SAF ou clôturés, datés par l’avis (ou la réponse). Les catégories, natures et avis ne comptent que les dossiers traités. À faire et En attente sont l’état actuel.</div>
+   <div class="mact"><button class="btn p" onclick="closeM()">Fermer</button></div>`);
+  $('sp').onchange=e=>{S.sp=e.target.value;drawStats()};
+  $('stCsv').onclick=()=>{const L=[['Agent',...STCOLS.map(c=>c[1])].join(';')].concat(rows.map(r=>[r.label,...STCOLS.map(c=>r.o[c[0]])].join(';')),[['Total',...STCOLS.map(c=>tot[c[0]])].join(';')]);
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+L.join('\n')],{type:'text/csv'}));a.download='statistiques-agents.csv';a.click()}}
+$('bStat').onclick=()=>openStats();
+
+
+/* ============ BILAN D'ACTIVITÉ (clic sur la bulle Clôturés) ============ */
+/* Périmètre = ce que voit la personne : vue complète = tout le service, chef de service = son service, agent = ses dossiers.
+   « Traité » = avis rendu par l'agent (statuts Relecture, Retour SAF, Clôturé), daté par la date d'avis. */
+const WCAT={'1':5,'2':4,'3':3,'4':2,'5':1,'5 < 20':0.5};
+const chargeDoss=r=>(WCAT[r.Categorie]??1)+(r.Nb_Derogations||0)+(r.Nb_Demandes_Avis||0)+(r.Sous_Commission?1:0);
+const dTreat=r=>r.Date_Termine_Agent||r.Date_Cloture||r.Date_Arrivee||0;
+const yOf=t=>{const y=t?new Date(t*1000).getUTCFullYear():0;return y>1990&&y<2100?y:0},mOf=t=>t?new Date(t*1000).getUTCMonth():-1;
+const svcOf=r=>r.Service_Attribue||(r.Agent_Assigne&&S.pers[r.Agent_Assigne]?S.pers[r.Agent_Assigne].Service:'')||'Non renseigné';
+const med=a=>{if(!a.length)return null;a=a.slice().sort((x,y)=>x-y);const m=a.length>>1;return a.length%2?a[m]:(a[m-1]+a[m])/2};
+const MN=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+function scopeLabel(){const a=actor();if(!a||a.isOwner)return 'Ensemble du service';if(isGrp(a))return 'Ensemble du GPREV';if(isSAF(a))return 'SAF';if(isChef(a))return 'Service '+svcN(a.Service);return fullName(a)}
+function dashStats(L){const o={n:0,fav:0,def:0,sans:0,der:0,dem:0,sc:0,ch:0,c:{},nat:{},delays:[],ok:0,okN:0,clos:0};
+  L.forEach(r=>{o.n++;if(r.Avis=='Favorable')o.fav++;else if(r.Avis=='Défavorable')o.def++;else o.sans++;
+    o.der+=r.Nb_Derogations||0;o.dem+=r.Nb_Demandes_Avis||0;if(r.Sous_Commission)o.sc++;o.ch+=chargeDoss(r);if(r.Statut=='Clôturé')o.clos++;
+    const c=r.Categorie||'—';o.c[c]=(o.c[c]||0)+1;const n=r.Nature||'—';o.nat[n]=(o.nat[n]||0)+1;
+    if(r.Avis&&r.Date_Termine_Agent&&r.Date_Arrivee&&r.Date_Termine_Agent>=r.Date_Arrivee){o.delays.push((r.Date_Termine_Agent-r.Date_Arrivee)/86400);const e=echOf(r);if(e){o.okN++;if(r.Date_Termine_Agent<=e)o.ok++}}});
+  o.med=med(o.delays);o.pct=o.okN?Math.round(100*o.ok/o.okN):null;return o}
+function renderDash(el){
+  const all=pool().filter(r=>TREATED.includes(r.Statut)),cy=new Date().getFullYear();
+  const years=[...new Set(all.map(r=>yOf(dTreat(r))).filter(Boolean).concat(cy))].sort((a,b)=>b-a);
+  if(!S.yr||(S.yr!='all'&&!years.includes(S.yr)))S.yr=years.includes(cy)?cy:years[0];if(S.mo==null)S.mo=-1;
+  const inP=t=>{if(S.yr=='all')return true;if(!t||yOf(t)!=S.yr)return false;return S.mo<0||mOf(t)==S.mo};
+  const noDate=all.filter(r=>!dTreat(r)).length;
+  const L=all.filter(r=>inP(dTreat(r))&&(!S.who||gkey(r)==S.who)),st=dashStats(L);
+  const pc=x=>st.n?Math.round(100*x/st.n)+' %':'—';
+  const per=S.yr=='all'?'toute la période':(S.mo>=0?MN[S.mo].toLowerCase()+' ':'')+(S.mo>=0?S.yr:'année '+S.yr);
+  /* par personne */
+  const todo={};pool().forEach(r=>{if(ACTIVE.includes(r.Statut)){const k=gkey(r);todo[k]=(todo[k]||0)+1}});
+  const by={};L.forEach(r=>{const k=gkey(r);(by[k]=by[k]||[]).push(r)});Object.keys(todo).forEach(k=>{if(!by[k])by[k]=[]});
+  const rows=Object.keys(by).map(k=>({k,lab:glabel(k),s:dashStats(by[k]),todo:todo[k]||0})).filter(x=>x.s.n||x.todo).sort((a,b)=>b.s.ch-a.s.ch||b.s.n-a.s.n);
+  const mx=Math.max(1,...rows.map(x=>x.s.n)),mxc=Math.max(1,...rows.map(x=>x.s.ch));
+  /* par service */
+  const sv={};L.forEach(r=>{const k=svcOf(r);(sv[k]=sv[k]||[]).push(r)});
+  const svr=Object.keys(sv).map(k=>({k,s:dashStats(sv[k])})).sort((a,b)=>b.s.n-a.s.n);
+  /* flux mensuel : reçus / traités */
+  const yy=S.yr=='all'?cy:S.yr,rec=Array(12).fill(0),tra=Array(12).fill(0);
+  pool().forEach(r=>{if(r.Date_Arrivee&&yOf(r.Date_Arrivee)==yy&&(!S.who||gkey(r)==S.who))rec[mOf(r.Date_Arrivee)]++});
+  all.forEach(r=>{const t=dTreat(r);if(t&&yOf(t)==yy&&(!S.who||gkey(r)==S.who))tra[mOf(t)]++});
+  const mm=Math.max(1,...rec,...tra);
+  const bars=(items,col)=>{const m=Math.max(1,...items.map(x=>x[1]));return items.map(([k,v])=>`<div class="br"><span class="bl">${esc(k)}</span><span class="bt"><i style="width:${(100*v/m).toFixed(1)}%;background:${col||'var(--acc)'}"></i></span><b>${v}</b></div>`).join('')||'<div class="note">Aucune donnée sur la période</div>'};
+  const cats=['1','2','3','4','5','5 < 20','—'].filter(c=>st.c[c]).map(c=>[c=='—'?'Non renseignée':c=='5 < 20'?'5e catégorie < 20 pers.':'Catégorie '+c,st.c[c]]);
+  const nats=Object.entries(st.nat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k=='—'?'Non renseignée':k,v]);
+  const types={};L.forEach(r=>{if(r.Type_ERP)types[r.Type_ERP]=(types[r.Type_ERP]||0)+1});
+  const sce={};L.forEach(r=>{if(r.Sous_Commission&&S.scs[r.Sous_Commission]){const k=fd(S.scs[r.Sous_Commission].Date);sce[k]=(sce[k]||0)+1}});
+  const cm={f:L.filter(r=>r.Avis_Commission=='Favorable').length,d:L.filter(r=>r.Avis_Commission=='Défavorable').length};
+  const noAgent=L.filter(r=>!r.Agent_Assigne).length,noAvis=st.sans;
+  const td=(v,f)=>`<td class="num">${v==null||v===''||v===0&&f!==1?'·':v}</td>`;
+  el.innerHTML=`<div class="dh"><h2>Bilan d’activité · ${esc(scopeLabel())}${S.who?' · '+esc(glabel(S.who)):''}</h2>
+    <select id="dyr" aria-label="Année">${years.map(y=>`<option value="${y}" ${y==S.yr?'selected':''}>${y}</option>`).join('')}<option value="all" ${S.yr=='all'?'selected':''}>Toutes les années</option></select>
+    <select id="dmo" aria-label="Mois" ${S.yr=='all'?'disabled':''}><option value="-1">Toute l’année</option>${MN.map((m,i)=>`<option value="${i}" ${S.mo==i?'selected':''}>${m}</option>`).join('')}</select>
+    ${S.who?'<button class="btn" id="dall">Tout le monde</button>':''}<button class="btn" id="dlist">${S.showList?'Masquer':'Afficher'} la liste des dossiers</button><button class="btn" id="dcsv">Exporter en CSV</button></div>
+   <div class="note" style="margin:-6px 0 12px">Dossiers traités (avis rendu par l’agent) sur ${esc(per)}, datés par la date d’avis.</div>
+   <div class="kp"><div><b>${st.n}</b><span>dossiers traités</span></div><div><b style="color:var(--ok)">${st.fav}</b><span>avis favorables · ${pc(st.fav)}</span></div><div><b style="color:var(--bad)">${st.def}</b><span>avis défavorables · ${pc(st.def)}</span></div>
+    <div><b>${st.der}</b><span>demandes de dérogation</span></div><div><b>${st.dem}</b><span>demandes d’avis</span></div><div><b>${st.sc}</b><span>passés en sous-commission</span></div>
+    <div><b>${st.med==null?'—':Math.round(st.med)+' j'}</b><span>délai médian arrivée → avis</span></div><div><b>${st.pct==null?'—':st.pct+' %'}</b><span>avis rendus dans le délai</span></div><div><b>${Math.round(st.ch)}</b><span>indice de charge</span></div></div>
+   <div class="dg">
+    <div class="dc w"><h3>Flux mensuel ${yy}</h3><div class="lg"><span><i style="background:var(--acc)"></i>Dossiers reçus</span><span><i style="background:var(--ok)"></i>Dossiers traités</span></div>
+     <div class="mo">${MN.map((m,i)=>`<div title="${m} : ${rec[i]} reçus, ${tra[i]} traités"><em>${rec[i]||''} / ${tra[i]||''}</em><span style="display:flex;gap:3px;align-items:flex-end;height:100%;width:100%"><i style="height:${Math.round(100*rec[i]/mm)}%"></i><i style="height:${Math.round(100*tra[i]/mm)}%;background:var(--ok)"></i></span>${['Jan','Fév','Mar','Avr','Mai','Juin','Juil','Août','Sep','Oct','Nov','Déc'][i]}</div>`).join('')}</div></div>
+    ${svr.length>1?`<div class="dc"><h3>Par service</h3>${bars(svr.map(x=>[x.k,x.s.n]))}<div class="note" style="margin-top:6px">Indice de charge : ${svr.map(x=>esc(x.k)+' '+Math.round(x.s.ch)).join(' · ')}</div></div>`:''}
+    <div class="dc w"><h3>Par personne <span class="note" style="font-weight:400">(cliquez sur un nom pour filtrer)</span></h3>
+     <div class="itw"><table class="itab"><thead><tr><th>Personne</th><th class="num">Traités</th><th class="num">Fav.</th><th class="num">Déf.</th><th class="num">Dérog.</th><th class="num">Dem. avis</th><th class="num">Sous-com</th><th class="num">Cat 1-2</th><th class="num">Cat 3-4</th><th class="num">Cat 5</th><th class="num">5&lt;20</th><th class="num">Délai méd.</th><th class="num">Dans délai</th><th class="num">Charge</th><th class="num">À faire</th></tr></thead><tbody>
+     ${rows.map(x=>{const s=x.s;return `<tr data-who="${x.k}" class="${S.who==x.k?'on':''}" style="cursor:pointer"><td><b>${esc(x.lab)}</b><span class="bt" style="display:flex;margin-top:3px"><i style="width:${(100*s.n/mx).toFixed(1)}%;background:var(--acc)"></i></span></td>${td(s.n)}${td(s.fav)}${td(s.def)}${td(s.der)}${td(s.dem)}${td(s.sc)}${td((s.c['1']||0)+(s.c['2']||0))}${td((s.c['3']||0)+(s.c['4']||0))}${td(s.c['5']||0)}${td(s.c['5 < 20']||0)}${td(s.med==null?'':Math.round(s.med)+' j')}${td(s.pct==null?'':s.pct+' %')}${td(Math.round(s.ch))}${td(x.todo)}</tr>`}).join('')||'<tr><td colspan="15">Aucune donnée sur la période</td></tr>'}</tbody></table></div>
+     <div class="note">Indice de charge = points par dossier selon la catégorie (1 : 5 · 2 : 4 · 3 : 3 · 4 : 2 · 5 : 1 · 5 &lt; 20 : 0,5 · sans catégorie : 1), + 1 par dérogation, + 1 par demande d’avis, + 1 si passage en sous-commission. Il reflète l’effort, pas seulement le nombre de dossiers.</div></div>
+    <div class="dc"><h3>Catégories</h3>${bars(cats)}</div>
+    <div class="dc"><h3>Nature de l’étude</h3>${bars(nats)}</div>
+    <div class="dc"><h3>Sous-commission</h3>${bars([['Passés en sous-commission',st.sc],['Sans sous-commission',st.n-st.sc]].filter(x=>x[1]),'var(--svc)')}${Object.keys(sce).length?`<div class="note" style="margin:8px 0 4px">Par séance</div>${bars(Object.entries(sce),'var(--svc)')}`:''}${cm.f+cm.d?`<div class="note" style="margin:8px 0 4px">Avis de la commission</div>${bars([['Favorable',cm.f],['Défavorable',cm.d]].filter(x=>x[1]))}`:''}</div>
+    ${Object.keys(types).length?`<div class="dc"><h3>Types d’établissement</h3>${bars(Object.entries(types).sort((a,b)=>b[1]-a[1]).slice(0,10))}</div>`:''}
+   </div>
+   <div class="note" style="margin-top:12px">Qualité des données : ${noDate?`<b>${noDate}</b> dossiers traités sans aucune date (exclus des périodes : réimportez le fichier pour les compléter) · `:''}${noAvis?`${noAvis} traités sans avis enregistré · `:''}${noAgent?`${noAgent} sans agent identifié (agent absent de Personnel).`:'tous les dossiers ont un agent.'}</div>`;
+  $('dyr').onchange=e=>{S.yr=e.target.value=='all'?'all':+e.target.value;renderDash(el)};
+  $('dmo').onchange=e=>{S.mo=+e.target.value;renderDash(el)};
+  $('dlist').onclick=()=>{S.showList=!S.showList;renderDetailNow()};
+  if($('dall'))$('dall').onclick=()=>{S.who=null;renderSub();renderList();renderDash(el)};
+  $('dcsv').onclick=()=>{const H=['Personne','Traités','Favorables','Défavorables','Dérogations','Demandes d’avis','Sous-commission','Cat 1-2','Cat 3-4','Cat 5','5 < 20','Délai médian (j)','% dans délai','Indice de charge','À faire'];
+    const Ls=[H.join(';')].concat(rows.map(x=>{const s=x.s;return [x.lab,s.n,s.fav,s.def,s.der,s.dem,s.sc,(s.c['1']||0)+(s.c['2']||0),(s.c['3']||0)+(s.c['4']||0),s.c['5']||0,s.c['5 < 20']||0,s.med==null?'':Math.round(s.med),s.pct==null?'':s.pct,Math.round(s.ch),x.todo].join(';')}));
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+Ls.join('\n')],{type:'text/csv'}));a.download='bilan-activite.csv';a.click()};
+  el.onclick=e=>{const b=e.target.closest('tr[data-who]');if(!b)return;S.who=S.who==b.dataset.who?null:b.dataset.who;S.limit=200;renderSub();renderList();renderDash(el)};
+}
+
+
+/* ============ ESPACE SOUS-COMMISSIONS ============ */
+const scDateOf=r=>{const x=r.Sous_Commission&&S.scs[r.Sous_Commission];return x?x.Date:0};
+const scUp=r=>{const d=scDateOf(r);return !!d&&d>=todayU()};
+function renderSCPane(el){
+  const mode=S.scv||'up',t=todayU(),base=pool().filter(r=>r.Sous_Commission&&scDateOf(r)&&(!S.who||gkey(r)==S.who));
+  const seances=Object.values(S.scs).filter(x=>mode=='all'||(mode=='up'?x.Date>=t:x.Date<t)).sort((a,b)=>mode=='past'?b.Date-a.Date:a.Date-b.Date);
+  const rowsBy=x=>base.filter(r=>r.Sous_Commission==x.id&&true).sort((a,b)=>((a.Ordre_SC||1e9)-(b.Ordre_SC||1e9))||(scLate(b)-scLate(a))||String(a.Nom_Dossier||nomDossier(a)).localeCompare(String(b.Nom_Dossier||nomDossier(b))));
+  const all=seances.flatMap(rowsBy),nDef=all.filter(r=>r.Avis=='Défavorable').length,nDer=all.reduce((a,r)=>a+(r.Nb_Derogations||0),0),nDem=all.reduce((a,r)=>a+(r.Nb_Demandes_Avis||0),0),nLate=all.filter(scLate).length;
+  const avisB=r=>r.Avis=='Favorable'?'<span class="pas ok">Favorable</span>':r.Avis=='Défavorable'?'<span class="pas bad">Défavorable</span>':'<span class="pas na">À rendre</span>';
+  const canOrd=(isSAF(actor())||isGrp(actor()))&&dcols().includes('Ordre_SC');
+  const noOrdCol=(isSAF(actor())||isGrp(actor()))&&!dcols().includes('Ordre_SC');
+  const sec=x=>{const L=rowsBy(x),d=L.filter(r=>r.Avis=='Défavorable').length,dr=L.reduce((a,r)=>a+(r.Nb_Derogations||0),0),dm=L.reduce((a,r)=>a+(r.Nb_Demandes_Avis||0),0),pret=x.Date-14*86400;
+    return `<div class="dc w"><h3>Séance du ${fd(x.Date)}${x.Libelle?' · '+esc(x.Libelle):''} <span class="note" style="font-weight:400">· dossiers prêts avant le ${fd(pret)}${x.Date>=t?' (dans '+Math.round((x.Date-t)/86400)+' j)':''}</span></h3>
+     <div class="sumrow" style="margin:0 0 8px"><span class="pill" style="--c:var(--svc)">${L.length} dossier${L.length>1?'s':''}</span><button class="btn" data-pdf="${x.id}" title="Télécharger l’ordre de passage en PDF">Exporter en PDF</button>${d?`<span class="pill" style="--c:var(--late)">${d} défavorable${d>1?'s':''}</span>`:''}${dr?`<span class="pill" style="--c:var(--reprise)">${dr} dérogation${dr>1?'s':''}</span>`:''}${dm?`<span class="pill" style="--c:var(--reprise)">${dm} demande${dm>1?'s':''} d’avis</span>`:''}</div>
+     ${L.length?`<div class="itw"><table class="itab"><thead><tr><th class="num">N°</th><th>Dossier</th><th>Agent</th><th>Statut</th><th>Avis</th><th class="num">Dérogations</th><th class="num">Demandes d’avis</th><th>Prêt ?</th></tr></thead><tbody>
+      ${L.map((r,i)=>{const p=r.Agent_Assigne&&S.pers[r.Agent_Assigne],ok=['Retour SAF','Clôturé'].includes(r.Statut),late=scLate(r);
+       return `<tr data-sel="${r.id}" data-scid="${x.id}" ${canOrd?'draggable="true"':''} style="cursor:pointer"><td class="num ordc" data-nosel="1" title="${canOrd?'Glisser pour réorganiser':''}">${canOrd?`<span class="mv" data-mv="up" data-rid="${r.id}" data-scid="${x.id}" title="Monter">▲</span><span class="mv" data-mv="down" data-rid="${r.id}" data-scid="${x.id}" title="Descendre">▼</span> `:''}<b>${i+1}</b></td><td class="nmc">${esc(r.Nom_Dossier||nomDossier(r))}</td><td>${p?esc(fullName(p)):'<span class="note">non attribué</span>'}</td><td><span class="pill" data-k="${stageOf(r)}">${esc(r.Statut||'')}</span></td><td>${avisB(r)}</td>
+       <td class="num">${r.Nb_Derogations?'<b style="color:var(--reprise)">'+r.Nb_Derogations+'</b>':'·'}</td><td class="num">${r.Nb_Demandes_Avis?'<b style="color:var(--reprise)">'+r.Nb_Demandes_Avis+'</b>':'·'}</td>
+       <td>${ok?'<span class="pas ok">Livré</span>':late?'<span class="pas bad">En retard</span>':'<span class="pas soon">En préparation</span>'}</td></tr>`}).join('')}</tbody></table></div>`:'<div class="note">Aucun dossier rattaché à cette séance.</div>'}</div>`};
+  el.innerHTML=`<div class="dh"><h2>Sous-commissions · ${esc(scopeLabel())}${S.who?' · '+esc(glabel(S.who)):''}</h2>
+    <select id="scv" aria-label="Séances"><option value="up" ${mode=='up'?'selected':''}>Séances à venir</option><option value="past" ${mode=='past'?'selected':''}>Séances passées</option><option value="all" ${mode=='all'?'selected':''}>Toutes</option></select>
+    ${S.who?'<button class="btn" id="dall">Tout le monde</button>':''}<button class="btn" id="dlist">${S.showList?'Masquer':'Afficher'} la liste des dossiers</button><button class="btn" id="dcsv">Exporter l’ordre du jour (CSV)</button>${isGrp(actor())?'<button class="btn p" id="dodj">Coller l’ordre du jour</button>':''}</div>
+   <div class="kp"><div><b>${all.length}</b><span>dossiers rattachés à une séance</span></div><div><b style="color:var(--bad)">${nDef}</b><span>avis défavorables</span></div><div><b>${nDer}</b><span>demandes de dérogation</span></div><div><b>${nDem}</b><span>demandes d’avis</span></div><div><b style="color:${nLate?'var(--bad)':'inherit'}">${nLate}</b><span>en retard avant la séance</span></div></div>
+   ${noOrdCol?'<div class="note" style="margin:0 0 10px">Pour réorganiser l’ordre de passage, il faut une colonne <b>Ordre_SC</b> (entier) dans Dossiers. <button class="btn" id="mkOrd">Créer la colonne Ordre_SC</button></div>':''}
+   <div class="dg">${seances.map(sec).join('')||'<div class="dc w"><div class="note">Aucune séance. Ajoutez des dates avec le bouton « Séances », puis rattachez les dossiers depuis leur fiche.</div></div>'}</div>`;
+  $('scv').onchange=e=>{S.scv=e.target.value;renderSCPane(el)};
+  if($('dodj'))$('dodj').onclick=()=>openOdj('');
+  if($('mkOrd'))$('mkOrd').onclick=async()=>{try{await act(['AddColumn',T.D,'Ordre_SC',{type:'Int',isFormula:false}]);toast('Colonne créée')}catch(e){toast('Création refusée : '+(e.message||e),true)}};
+  $('dlist').onclick=()=>{S.showList=!S.showList;renderDetailNow()};
+  if($('dall'))$('dall').onclick=()=>{S.who=null;renderSub();renderList();renderSCPane(el)};
+  $('dcsv').onclick=()=>{const H=['Séance','Dossier','Agent','Statut','Avis','Dérogations','Demandes d’avis','Prêt'];
+    const Ls=[H.join(';')].concat(seances.flatMap(x=>rowsBy(x).map(r=>[fd(x.Date),'"'+String(r.Nom_Dossier||nomDossier(r)).replace(/"/g,'""')+'"',r.Agent_Assigne&&S.pers[r.Agent_Assigne]?fullName(S.pers[r.Agent_Assigne]):'',r.Statut,r.Avis||'',r.Nb_Derogations||0,r.Nb_Demandes_Avis||0,['Retour SAF','Clôturé'].includes(r.Statut)?'Livré':scLate(r)?'En retard':'En préparation'].join(';'))));
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+Ls.join('\n')],{type:'text/csv'}));a.download='ordre-du-jour-sous-commission.csv';a.click()};
+  el.onclick=e=>{const pf=e.target.closest('[data-pdf]');if(pf){pdfSeance(+pf.dataset.pdf);return}const m=e.target.closest('[data-mv]');if(m){moveSC(+m.dataset.scid,+m.dataset.rid,m.dataset.mv=='up'?-1:1,el);return}
+    if(e.target.closest('[data-nosel]'))return;const b=e.target.closest('tr[data-sel]');if(!b)return;S.sel=+b.dataset.sel;renderList();renderDetailNow()};
+  el.ondragstart=e=>{const t=e.target.closest&&e.target.closest('tr[data-sel]');if(!t||!canOrd)return;S.drag=+t.dataset.sel;S.dragSc=+t.dataset.scid;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(S.drag))}catch(x){}};
+  el.ondragover=e=>{const t=e.target.closest&&e.target.closest('tr[data-sel]');if(!t||!S.drag||+t.dataset.scid!=S.dragSc)return;e.preventDefault();el.querySelectorAll('tr.ovr').forEach(x=>x.classList.remove('ovr'));t.classList.add('ovr')};
+  el.ondrop=e=>{const t=e.target.closest&&e.target.closest('tr[data-sel]');if(!t||!S.drag||+t.dataset.scid!=S.dragSc)return;e.preventDefault();const from=S.drag,to=+t.dataset.sel;S.drag=0;dropSC(S.dragSc,from,to,el)};
+  el.ondragend=()=>{S.drag=0;el.querySelectorAll('tr.ovr').forEach(x=>x.classList.remove('ovr'))};
+}
+/* ordre de passage : enregistré dans Ordre_SC, donc identique pour tout le monde */
+async function saveOrder(arr,el){arr.forEach((r,i)=>{r.Ordre_SC=i+1});renderSCPane(el);
+  const ups=arr.map((r,i)=>['UpdateRecord',T.D,r.id,{Ordre_SC:i+1}]);
+  try{await grist.docApi.applyUserActions(ups)}catch(e){toast('Ordre refusé : '+(e.message||e),true)}}
+function seanceRows(scid,all){return pool().filter(r=>r.Sous_Commission==scid&&(all||!S.who||gkey(r)==S.who)).sort((a,b)=>((a.Ordre_SC||1e9)-(b.Ordre_SC||1e9))||(scLate(b)-scLate(a))||String(a.Nom_Dossier||nomDossier(a)).localeCompare(String(b.Nom_Dossier||nomDossier(b))))}
+function moveSC(scid,rid,d,el){const a=seanceRows(scid),i=a.findIndex(r=>r.id==rid),j=i+d;if(i<0||j<0||j>=a.length)return;[a[i],a[j]]=[a[j],a[i]];saveOrder(a,el)}
+function dropSC(scid,from,to,el){if(from==to)return;const a=seanceRows(scid),i=a.findIndex(r=>r.id==from),j=a.findIndex(r=>r.id==to);if(i<0||j<0)return;const [m]=a.splice(i,1);a.splice(j,0,m);saveOrder(a,el)}
+
+
+
+/* ============ EXPORT PDF D'UNE SÉANCE ============ */
+function loadPdfLib(){return window.PDFLib?Promise.resolve():new Promise((ok,ko)=>{const c=document.createElement('script');
+  c.src='https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';c.onload=ok;c.onerror=()=>ko(new Error('bibliothèque PDF inaccessible'));document.head.appendChild(c)})}
+async function pdfSeance(scid){
+  const x=S.scs[scid];if(!x)return;
+  try{await loadPdfLib();const{PDFDocument,StandardFonts,rgb}=PDFLib,doc=await PDFDocument.create(),F=await doc.embedFont(StandardFonts.Helvetica),B=await doc.embedFont(StandardFonts.HelveticaBold);
+    const L=seanceRows(scid,true),W=841.89,H=595.28,M=34,clean=t=>String(t??'').replace(/[\r\n]+/g,' ').replace(/[^\x20-\x7E\xA0-\xFF‘’“”–—…€]/g,'').trim();
+    const cols=[['N°',28,'c'],['Dossier',370,'l'],['Agent',180,'l'],['Avis',80,'l'],['Dérog.',50,'c'],['Dem. avis',61,'c']],TW=cols.reduce((a,c)=>a+c[1],0);
+    const wrap=(t,w,font,sz)=>{const out=[];let cur='';clean(t).split(' ').forEach(wd=>{let nx=cur?cur+' '+wd:wd;if(font.widthOfTextAtSize(nx,sz)<=w){cur=nx;return}
+        if(cur)out.push(cur);cur=wd;while(font.widthOfTextAtSize(cur,sz)>w&&cur.length>1){let k=cur.length-1;while(k>1&&font.widthOfTextAtSize(cur.slice(0,k),sz)>w)k--;out.push(cur.slice(0,k));cur=cur.slice(k)}});if(cur)out.push(cur);return out.length?out:['']};
+    const nD=L.filter(r=>r.Avis=='Défavorable').length,nF=L.filter(r=>r.Avis=='Favorable').length,nDr=L.reduce((a,r)=>a+(r.Nb_Derogations||0),0),nDm=L.reduce((a,r)=>a+(r.Nb_Demandes_Avis||0),0);
+    const ink=rgb(.1,.13,.18),blue=rgb(.14,.31,.56),red=rgb(.7,.15,.12),grey=rgb(.45,.48,.52);
+    let page,y;const pages=[];
+    const newPage=(first)=>{page=doc.addPage([W,H]);pages.push(page);y=H-M;
+      if(first){page.drawText(clean('Sous-commission départementale du '+fd(x.Date)),{x:M,y:y-16,size:17,font:B,color:blue});y-=26;
+        if(x.Libelle)page.drawText(clean(x.Libelle),{x:M,y:y-10,size:10,font:F,color:grey}),y-=14;
+        page.drawText(clean(`Ordre de passage · ${L.length} dossier${L.length>1?'s':''} · ${nF} favorable${nF>1?'s':''} · ${nD} défavorable${nD>1?'s':''} · ${nDr} dérogation${nDr>1?'s':''} · ${nDm} demande${nDm>1?'s':''} d’avis`),{x:M,y:y-10,size:10,font:F,color:ink});y-=24}
+      else y-=4;
+      page.drawRectangle({x:M,y:y-18,width:TW,height:18,color:blue});let cx=M;
+      cols.forEach(c=>{const t=clean(c[0]),w=B.widthOfTextAtSize(t,9);page.drawText(t,{x:c[2]=='c'?cx+(c[1]-w)/2:cx+5,y:y-13,size:9,font:B,color:rgb(1,1,1)});cx+=c[1]});y-=18};
+    newPage(true);
+    L.forEach((r,i)=>{const p=r.Agent_Assigne&&S.pers[r.Agent_Assigne],name=wrap(r.Nom_Dossier||nomDossier(r),cols[1][1]-10,F,9),ag=wrap(p?fullName(p):'Non attribué',cols[2][1]-10,F,9),n=Math.max(name.length,ag.length),h=n*11+6;
+      if(y-h<M+16)newPage(false);
+      if(i%2)page.drawRectangle({x:M,y:y-h,width:TW,height:h,color:rgb(.95,.96,.98)});
+      const avis=r.Avis=='Favorable'?'Favorable':r.Avis=='Défavorable'?'Défavorable':'À rendre',ac=r.Avis=='Défavorable'?red:r.Avis=='Favorable'?rgb(.1,.45,.3):grey;
+      let cx=M;const cell=(k,txt,font,color)=>{const w=cols[k][1];if(cols[k][2]=='c'){const t=clean(txt),tw=font.widthOfTextAtSize(t,9);page.drawText(t,{x:cx+(w-tw)/2,y:y-12,size:9,font,color})}else(Array.isArray(txt)?txt:[txt]).forEach((ln,j)=>page.drawText(clean(ln),{x:cx+5,y:y-12-j*11,size:9,font,color}));cx+=w};
+      cell(0,String(i+1),B,ink);cell(1,name,F,ink);cell(2,ag,F,ink);cell(3,avis,r.Avis=='Défavorable'?B:F,ac);cell(4,r.Nb_Derogations?String(r.Nb_Derogations):'',B,red);cell(5,r.Nb_Demandes_Avis?String(r.Nb_Demandes_Avis):'',B,red);
+      page.drawLine({start:{x:M,y:y-h},end:{x:M+TW,y:y-h},thickness:.4,color:rgb(.82,.84,.87)});y-=h});
+    if(!L.length)page.drawText('Aucun dossier rattaché à cette séance.',{x:M,y:y-16,size:10,font:F,color:grey});
+    const st=clean('Édité le '+new Date().toLocaleDateString('fr-FR')+' · '+scopeLabel());
+    pages.forEach((pg,i)=>{pg.drawText(st,{x:M,y:18,size:8,font:F,color:grey});const t=`Page ${i+1} / ${pages.length}`;pg.drawText(t,{x:W-M-F.widthOfTextAtSize(t,8),y:18,size:8,font:F,color:grey})});
+    const bytes=await doc.save(),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));a.download='sous-commission-'+iso(x.Date)+'.pdf';document.body.appendChild(a);a.click();a.remove();toast('PDF généré')
+  }catch(e){toast('PDF impossible : '+(e.message||e),true)}}
+
+/* ============ ORDRE DU JOUR (liste collée depuis Prevarisc) ============ */
+const ODJ={rows:[],mk:false};
+function parseOdj(txt){const L=String(txt||'').split(/\r?\n/),out=[];
+  for(let i=0;i<L.length;i++){
+    const m=L[i].match(/^\s*\[(.*)\]\s*[ÉE]tude\s*-\s*(.+?)\s*\((AT|PC|DP|PA|PD|CU)\)\s*-\s*(.*?)\s+ayant pour date de passage en commission le (\d{2}\/\d{2}\/\d{4})\s*$/i);if(!m)continue;
+    let mid=m[4],ag='';const a=mid.match(/\(([^()]+)\)\s*$/);if(a){ag=a[1].trim();mid=mid.slice(0,a.index).trim()}
+    const h=mid.match(/^(\d{3,})\s*-\s*(.*)$/),dem=/^DEMAT/i.test(mid);
+    const nxt=(L[i+1]||'')+' '+(L[i+2]||''),pl=(nxt.match(/PLATAU\s*:\s*([A-Z0-9]{2,4}(?:-[A-Z0-9]{2,4}){1,3})/i)||[])[1]||'';
+    out.push({etab:m[1].trim(),type:m[3].toUpperCase(),airs:h?h[1]:'',demat:dem||!h,objet:(h?h[2]:mid).trim(),agent:ag,plateau:pl,date:parseDate(m[5])})}
+  return out}
+function matchOdj(o){const all=S.recs.filter(real),pick=c=>c.sort((a,b)=>(a.Statut=='Clôturé')-(b.Statut=='Clôturé')||b.id-a.id)[0]||null;
+  let c=[];if(o.airs)c=all.filter(r=>String(r.Numero_AIRS||'').replace(/\D/g,'')==o.airs);
+  if(!c.length&&o.plateau)c=all.filter(r=>String(r.Objet||'').toUpperCase().includes(o.plateau.toUpperCase())||String(r.Numero_Courrier||'').toUpperCase().includes(o.plateau.toUpperCase()));
+  if(!c.length&&o.etab&&norm(o.etab).length>5)c=all.filter(r=>norm(r.Etablissement)==norm(o.etab)&&(o.airs?true:r.Source=='DEMAT'));
+  return{r:pick(c),n:c.length}}
+function openOdj(txt){
+  openM(`<h2>Coller l’ordre du jour d’une sous-commission</h2><p style="color:var(--mut);margin:0 0 10px">Collez la liste Prevarisc (« [Établissement] Étude - … ayant pour date de passage en commission le … »). Les dossiers trouvés dans Grist seront rattachés à la séance correspondante.</p>
+   <textarea id="odjT" rows="9" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--soft);color:var(--ink);font:12.5px var(--font)" placeholder="Collez ici…">${esc(txt||'')}</textarea>
+   <div id="odjP"></div><div class="mact"><button class="btn" onclick="closeM()">Annuler</button><button class="btn p" id="odjGo" disabled>Rattacher</button></div>`);
+  const draw=()=>{const R=ODJ.rows=parseOdj($('odjT').value).map(o=>({o,...matchOdj(o)}));
+    const ok=R.filter(x=>x.r),dates=[...new Set(R.map(x=>x.o.date))],ko=R.filter(x=>!x.r),already=ok.filter(x=>x.r.Sous_Commission&&scDateOf(x.r)==x.o.date);
+    $('odjP').innerHTML=R.length?`<div class="sumrow" style="margin-top:10px"><span class="pill" style="--c:var(--cours)">${R.length} dossiers lus</span><span class="pill" style="--c:var(--ok)">${ok.length} trouvés dans Grist</span>${already.length?`<span class="pill" style="--c:var(--clos)">${already.length} déjà rattachés</span>`:''}<span class="pill" style="--c:var(--soon)">${ko.length} introuvables</span><span class="pill" style="--c:var(--svc)">séance(s) : ${dates.map(fd).join(', ')}</span></div>
+     ${ko.length?`<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><input type="checkbox" id="odjMk" ${ODJ.mk?'checked':''} style="margin-top:3px"><span>Créer les ${ko.length} dossiers introuvables (fiche minimale à compléter : établissement, n° AIRS, agent, objet), rattachés à la séance.</span></label>`:''}
+     <div class="itw" style="max-height:260px"><table class="itab"><thead><tr><th>Établissement</th><th>Dossier</th><th>Agent (Prevarisc)</th><th>Dans Grist</th></tr></thead><tbody>${R.map(x=>`<tr><td class="nmc">${esc(x.o.etab)}</td><td>${x.o.airs?'AIRS '+esc(x.o.airs):'DEMAT '+esc(x.o.plateau)}</td><td>${esc(x.o.agent)}</td><td>${x.r?`<span class="pas ok">${esc(x.r.Nom_Dossier||nomDossier(x.r))}${x.n>1?' ('+x.n+' correspondances)':''}</span>`:'<span class="pas soon">introuvable</span>'}</td></tr>`).join('')}</tbody></table></div>`:'<div class="note" style="margin-top:8px">Aucune ligne reconnue pour l’instant.</div>';
+    $('odjGo').disabled=!R.length;if($('odjMk'))$('odjMk').onchange=e=>{ODJ.mk=e.target.checked}};
+  $('odjT').oninput=draw;draw();
+  $('odjGo').onclick=async()=>{const R=ODJ.rows,btn=$('odjGo');btn.disabled=true;btn.textContent='Rattachement…';
+    try{const dates=[...new Set(R.map(x=>x.o.date))].filter(Boolean);let miss=dates.filter(d=>!Object.values(S.scs).some(x=>x.Date==d));
+      if(miss.length){await act(['BulkAddRecord',T.S,miss.map(()=>null),{Date:miss,Libelle:miss.map(()=>'Commission départementale')}]);await loadSC()}
+      const by={};Object.values(S.scs).forEach(x=>by[x.Date]=x.id);const cols=dcols();let n=0,c=0;
+      const ups=R.filter(x=>x.r&&x.r.Sous_Commission!=by[x.o.date]).map(x=>['UpdateRecord',T.D,x.r.id,{Sous_Commission:by[x.o.date]}]);
+      for(let i=0;i<ups.length;i+=100){await grist.docApi.applyUserActions(ups.slice(i,i+100));n+=Math.min(100,ups.length-i)}
+      if(ODJ.mk){const adds=R.filter(x=>!x.r).map(x=>{const o=x.o,p=findAgent(cleanAgent(o.agent)),f={Source:o.airs?'AIRS':'DEMAT',Numero_AIRS:o.airs,Etablissement:o.etab,Nature:'ERP',Statut:'Attribué service',
+          Service_Attribue:p&&['BMET','PMET','Chargé de mission'].includes(p.Service)?p.Service:'',Sous_Commission:by[o.date],Objet:(o.objet+(o.plateau?'\nCONSULTATION PLATAU : '+o.plateau:'')+(o.agent?'\nPréventionniste Prevarisc : '+o.agent:'')).slice(0,1500),Cle_Import:'ODJ|'+(o.airs||o.plateau||norm(o.etab))+'|'+iso8(o.date)};
+          Object.keys(f).forEach(k=>{if(!cols.includes(k))delete f[k]});return['AddRecord',T.D,null,f]});
+        for(let i=0;i<adds.length;i+=100){await grist.docApi.applyUserActions(adds.slice(i,i+100));c+=Math.min(100,adds.length-i)}}
+      closeM();toast(`${n} dossiers rattachés${c?' · '+c+' créés':''}`);S.stage='sc';render()}
+    catch(e){btn.disabled=false;btn.textContent='Rattacher';toast('Refusé : '+(e.message||e),true)}}}
+/* ============ RENDU GÉNÉRAL ============ */
+function render(){checkAgents();renderWho();renderField();renderSub();renderList();renderDetail()}
+</script>
+</body>
+</html>

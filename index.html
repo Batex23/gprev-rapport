@@ -137,7 +137,7 @@ table.st th{color:var(--mut);font-weight:600;vertical-align:bottom}
 'use strict';
 /* ================= CONFIGURATION ================= */
 const SOFFICE = 'https://cdn.zetaoffice.net/zetaoffice_latest/';   // binaires LibreOffice (WebAssembly)
-const T = { D: 'Dossiers', P: 'Personnel_du_GPREV', I: 'Identite', V: 'Rapports_Versions', R: 'Rapports_Remarques' };
+const T = { D: 'Dossiers', P: 'Personnel_du_GPREV', I: 'Identite', V: 'Rapports_Versions', R: 'Rapports_Remarques', F: 'Rapports_Fichiers' };
 const TYPES = ['Oubli de réglementation / prescription', 'Erreur de calcul d’effectif', 'Erreur de classement (type, catégorie)', 'Rédaction / mise en forme', 'Autre'];
 // Préfixes reconnus au début d'un commentaire, ex. « [calcul] l'effectif du personnel est faux ».
 const PREFIXES = [[/^\s*\[(presc|prescription|regl|réglementation|reglementation|oubli)\]/i, 0], [/^\s*\[(calcul|effectif)\]/i, 1],
@@ -173,12 +173,10 @@ const S = {
   statPeriode: 'annee',
 };
 function actor() { if (S.owner) return S.as && S.pers[S.as] ? S.pers[S.as] : OWNER; return S.me; }
+// Tous les utilisateurs identifiés peuvent importer et modifier le rapport, à toutes les étapes.
+// L'historique des versions garde la trace de qui a modifié quoi, et à quelle étape.
 function canEdit(r, a) {
-  if (!r || !a) return false;
-  if (LOCKED.includes(r.Statut)) return !!a.isOwner;
-  if (isGrp(a)) return true;
-  if (isChef(a) && r.Service_Attribue && svcN(r.Service_Attribue) == svcN(a.Service)) return true;
-  return refId(r.Agent_Assigne) == a.id && ACTIVE.includes(r.Statut);
+  return !!r && !!a;
 }
 const isRelecteur = (r, a) => !!a && !!r && refId(r.Agent_Assigne) !== a.id;
 const canSeeStats = (a) => isGrp(a) || isChef(a);
@@ -233,23 +231,43 @@ let tok = null;
 async function token() {
   if (tok && Date.now() < tok.exp) return tok;
   const t = await grist.docApi.getAccessToken({ readOnly: false });
-  tok = { ...t, exp: Date.now() + Math.max(30, (t.ttl || 300) - 60) * 1000 };
+  tok = { ...t, exp: Date.now() + Math.max(30000, (t.ttlMsecs || 300000) - 60000) };
   return tok;
 }
-async function downloadAtt(id) {
-  const t = await token();
-  const r = await fetch(`${t.baseUrl}/attachments/${id}/download?auth=${t.token}`);
-  if (!r.ok) throw new Error('Téléchargement de la pièce jointe impossible (' + r.status + ')');
-  return new Uint8Array(await r.arrayBuffer());
+// Les fichiers .odt sont stockés en base64 dans la table Rapports_Fichiers (une ligne par version).
+// Écriture : par le canal du widget (applyUserActions), qui fonctionne toujours.
+// Lecture : uniquement la ligne utile via l'API REST ; si Grist la refuse, lecture de la table entière (une fois).
+function toB64(bytes) { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); }
+function fromB64(b64) { const s = atob(b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
+async function saveFile(vid, dossierId, bytes) {
+  await act(['AddRecord', T.F, null, { Version: vid, Dossier: dossierId, Contenu: toB64(bytes), Taille: bytes.length }]);
 }
-async function uploadAtt(bytes, name) {
-  const t = await token();
-  const fd = new FormData();
-  fd.append('upload', new Blob([bytes], { type: 'application/vnd.oasis.opendocument.text' }), name);
-  const r = await fetch(`${t.baseUrl}/attachments?auth=${t.token}`, { method: 'POST', body: fd });
-  if (!r.ok) throw new Error('Envoi du fichier refusé par Grist (' + r.status + ')');
-  const ids = await r.json();
-  return ids[0];
+let allFiles = null, restOk = true;
+async function loadFile(v) {
+  if (restOk) {
+    try {
+      const t = await token();
+      const f = encodeURIComponent(JSON.stringify({ Version: [v.id] }));
+      const r = await fetch(`${t.baseUrl}/tables/${T.F}/records?filter=${f}&auth=${t.token}`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const rec = (j.records || [])[0];
+      if (rec && rec.fields.Contenu) return fromB64(rec.fields.Contenu);
+    } catch (e) { console.warn('Lecture ciblée refusée, lecture de la table entière', e); restOk = false; }
+  }
+  if (!allFiles) {
+    const t = await grist.docApi.fetchTable(T.F); allFiles = {};
+    t.id.forEach((id, i) => { allFiles[refId(t.Version[i])] = t.Contenu[i]; });
+  }
+  if (allFiles[v.id]) return fromB64(allFiles[v.id]);
+  // anciennes versions enregistrées en pièce jointe
+  const ids = attIds(v.Fichier);
+  if (ids.length) {
+    const t = await token();
+    const r = await fetch(`${t.baseUrl}/attachments/${ids[ids.length - 1]}/download?auth=${t.token}`);
+    if (r.ok) return new Uint8Array(await r.arrayBuffer());
+  }
+  throw new Error('Fichier de la version ' + v.Numero + ' introuvable.');
 }
 
 async function discover() {
@@ -261,7 +279,7 @@ async function discover() {
     const m = a && /^Ref:(.+)$/.exec(String(a.type)); if (m) T.P = m[1];
     const fnd = (re) => ids.find((x) => re.test(norm(x)));
     T.I = fnd(/^identit/) || T.I;
-    S.tablesOk = ids.includes(T.V) && ids.includes(T.R);
+    S.tablesOk = ids.includes(T.V) && ids.includes(T.R) && ids.includes(T.F);
   } catch (e) { console.warn('Métadonnées inaccessibles', e); S.tablesOk = null; }
 }
 async function createTables() {
@@ -269,7 +287,7 @@ async function createTables() {
     const ids = await grist.docApi.listTables();
     if (!ids.includes(T.V)) await act(['AddTable', T.V, [
       { id: 'Dossier', type: 'Ref:' + T.D }, { id: 'Numero', type: 'Int' }, { id: 'Etape', type: 'Text' },
-      { id: 'Auteur', type: 'Ref:' + T.P }, { id: 'Date', type: 'DateTime:Europe/Paris' }, { id: 'Fichier', type: 'Attachments' },
+      { id: 'Auteur', type: 'Ref:' + T.P }, { id: 'Date', type: 'DateTime:Europe/Paris' },
       { id: 'Nb_Commentaires', type: 'Int' }, { id: 'Nb_Modifs_Suivies', type: 'Int' }, { id: 'Note', type: 'Text' }]]);
     if (!ids.includes(T.R)) await act(['AddTable', T.R, [
       { id: 'Dossier', type: 'Ref:' + T.D }, { id: 'Version', type: 'Ref:' + T.V }, { id: 'Cle', type: 'Text' },
@@ -278,6 +296,11 @@ async function createTables() {
       { id: 'Type_Erreur', type: 'Choice', widgetOptions: JSON.stringify({ choices: TYPES }) },
       { id: 'Etat', type: 'Choice', widgetOptions: JSON.stringify({ choices: ['Ouverte', 'Résolue', 'Supprimée'] }) },
       { id: 'Date', type: 'DateTime:Europe/Paris' }]]);
+    if (!ids.includes(T.F)) {
+      await act(['AddTable', T.F, [{ id: 'Version', type: 'Ref:' + T.V }, { id: 'Dossier', type: 'Ref:' + T.D }, { id: 'Contenu', type: 'Text' }, { id: 'Taille', type: 'Int' }]]);
+      // « À la demande » : les fichiers ne sont pas chargés dans le navigateur à l'ouverture du document Grist.
+      try { const tb = rowsOf(await grist.docApi.fetchTable('_grist_Tables')).find((t) => t.tableId == T.F); if (tb) await act(['UpdateRecord', '_grist_Tables', tb.id, { onDemand: true }]); } catch (e) { console.warn('onDemand', e); }
+    }
     toast('Tables du rapport créées');
     await discover(); hideBar(); await loadData(); refresh();
   } catch (e) { toast('Création refusée : ' + (e.message || e), true); }
@@ -411,10 +434,9 @@ function renderAll() { renderHeader(); renderPane(); }
 /* ================= OUVERTURE DES DOCUMENTS ================= */
 function versionById(id) { return S.versions.find((v) => v.id == id); }
 async function fileOf(v) {
-  const ids = attIds(v.Fichier); if (!ids.length) throw new Error('La version ' + v.Numero + ' n’a pas de fichier.');
   const name = 'v' + v.id + '.odt';
   try { FS.stat(DIR + name); return DIR + name; } catch (e) {}
-  return writeFS(name, await downloadAtt(ids[ids.length - 1]));
+  return writeFS(name, await loadFile(v));
 }
 async function openCurrent() {
   const r = S.rec, a = actor();
@@ -474,12 +496,12 @@ function importModele() {
 async function newVersion(bytes, annots, redlines, note) {
   const r = S.rec, a = actor();
   const num = (S.versions[0] ? S.versions[0].Numero || 0 : 0) + 1;
-  const name = fname([r.Ville, r.Etablissement].filter(Boolean).join('_')) + '_v' + num + '.odt';
-  const att = await uploadAtt(bytes, name);
   const res = await act(['AddRecord', T.V, null, {
     Dossier: r.id, Numero: num, Etape: r.Statut || '', Auteur: a && a.id ? a.id : 0, Date: Date.now() / 1000,
-    Fichier: ['L', att], Nb_Commentaires: annots.length, Nb_Modifs_Suivies: redlines || 0, Note: note || '' }]);
+    Nb_Commentaires: annots.length, Nb_Modifs_Suivies: redlines || 0, Note: note || '' }]);
   const vid = res && res.retValues ? res.retValues[0] : null;
+  await saveFile(vid, r.id, bytes);
+  if (allFiles) allFiles[vid] = null;
   await syncRemarques(annots, vid);
   await loadData();
   return vid;
@@ -576,7 +598,7 @@ function refresh() {
   renderAll();
   if (!S.ready) return;
   if (S.tablesOk === false) {
-    overlay('<h2>Tables du rapport absentes</h2><p>Le widget a besoin de deux tables : <b>' + T.V + '</b> (versions) et <b>' + T.R + '</b> (remarques).</p><button class="btn p" id="bMk">Créer les tables</button>');
+    overlay('<h2>Tables du rapport absentes</h2><p>Le widget a besoin de trois tables : <b>' + T.V + '</b> (versions), <b>' + T.R + '</b> (remarques) et <b>' + T.F + '</b> (fichiers). Les tables déjà présentes sont conservées.</p><button class="btn p" id="bMk">Créer les tables</button>');
     $('bMk').onclick = createTables; return;
   }
   if (S.officeReady) applyUser().then(openCurrent);
@@ -626,7 +648,7 @@ grist.onRecords(() => {}); // nécessaire pour recevoir les changements de séle
 renderAll();
 startOffice();
 // Recharge régulièrement versions et remarques (travail à plusieurs).
-setInterval(async () => { if (document.hidden || !S.rec || S.busy) return; const n = S.versions.length; await loadData(); if (S.versions.length != n && S.view && S.view.mode != 'edit') toast('Nouvelle version enregistrée par un collègue'); renderPane(); }, 15000);
+setInterval(async () => { if (document.hidden || !S.rec || S.busy) return; const n = S.versions.length; await loadData(); if (S.versions.length != n) { if (!S.view && S.officeReady) openCurrent(); else if (S.view.mode != 'edit') toast('Nouvelle version enregistrée par un collègue'); } renderPane(); }, 15000);
 </script>
 </body>
 </html>
