@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rapport GPREV</title>
+<script>
+// LibreOffice a besoin d'une page « isolée ». Sur GitHub Pages, c'est le service worker
+// isolation-sw.js qui ajoute les en-têtes ; au tout premier chargement, on recharge une fois.
+(function () {
+  if (window.crossOriginIsolated || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('isolation-sw.js').then(function () { return navigator.serviceWorker.ready; }).then(function () {
+    var k = 'rapport-iso-reload', n = 0;
+    try { n = +sessionStorage.getItem(k) || 0; sessionStorage.setItem(k, n + 1); } catch (e) {}
+    if (n < 2) location.reload();
+  }).catch(function (e) { console.warn('Service worker indisponible', e); });
+})();
+</script>
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+:root{
+  color-scheme:light dark;
+  --bg:#edf0f5;--card:#fff;--soft:#f3f5f9;--ink:#14223a;--mut:#5a687d;--line:#d9dfe8;
+  --acc:#234f8e;--acc-ink:#fff;--bad:#b3261e;--ok:#1d7a52;--warn:#b36b00;--track:#7650a6;
+  --font:Bahnschrift,"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1620;--card:#172130;--soft:#1d293a;--ink:#e6edf6;--mut:#93a2b8;--line:#2a384c;
+  --acc:#5b9bf0;--acc-ink:#0b1626;--bad:#ff8a80;--ok:#6fd0a2;--warn:#ffc266;--track:#bb9be6;
+}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:14px/1.45 var(--font);background:var(--bg);color:var(--ink);display:flex;flex-direction:column;overflow:hidden}
+button,select,input,textarea{font:inherit;color:inherit}
+[hidden]{display:none!important}
+.btn{border:1px solid var(--line);background:var(--soft);border-radius:8px;padding:6px 12px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--acc)}
+.btn:disabled{opacity:.45;cursor:default;border-color:var(--line)}
+.btn.p{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
+.btn.sm{padding:3px 9px;font-size:12.5px}
+.btn.on{background:color-mix(in srgb,var(--track) 18%,var(--card));border-color:var(--track);color:var(--track)}
+
+/* barre du haut */
+.top{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--card);border-bottom:1px solid var(--line);flex:none;min-height:52px}
+.ttl{flex:1;min-width:0;line-height:1.25}
+.ttl b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ttl small{color:var(--mut);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.ttl a{color:var(--acc)}
+.mode{font-size:12px;font-weight:600;border-radius:999px;padding:3px 10px;white-space:nowrap;background:var(--soft);border:1px solid var(--line)}
+.mode.edit{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+.mode.ro{color:var(--mut)}
+.mode.cmp{color:var(--track);border-color:color-mix(in srgb,var(--track) 45%,var(--line))}
+.dirty{color:var(--warn);font-size:12.5px;white-space:nowrap}
+
+/* bandeau d'alerte */
+.bar{padding:8px 14px;font-size:13px;background:color-mix(in srgb,var(--warn) 14%,var(--card));border-bottom:1px solid color-mix(in srgb,var(--warn) 40%,var(--line));display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:none}
+
+/* zone principale */
+.main{flex:1;display:flex;min-height:0}
+.edz{position:relative;flex:1;min-width:0;background:var(--soft)}
+#qtcanvas{border:0;padding:0;display:block;width:100%;height:100%;visibility:hidden}
+.ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;background:var(--bg);color:var(--mut)}
+.ov h2{margin:0;color:var(--ink);font-size:17px}
+.ov p{margin:0;max-width:520px}
+.spin{width:44px;height:44px;border:5px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+
+/* panneau latéral */
+.side{width:340px;flex:none;display:flex;flex-direction:column;background:var(--card);border-left:1px solid var(--line);min-height:0}
+.side.closed{width:0;border:0;overflow:hidden}
+.tabs{display:flex;border-bottom:1px solid var(--line);flex:none}
+.tab{all:unset;cursor:pointer;flex:1;text-align:center;padding:9px 4px;font-size:13px;color:var(--mut);border-bottom:2px solid transparent}
+.tab.on{color:var(--ink);border-bottom-color:var(--acc);font-weight:600}
+.tab .n{font-size:11px;background:var(--soft);border-radius:999px;padding:0 6px;margin-left:4px}
+.pane{flex:1;overflow:auto;padding:12px}
+.empty{color:var(--mut);font-size:13px;padding:8px 2px}
+.ver{border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px}
+.ver.cur{border-color:var(--acc)}
+.ver .h{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.ver .h b{font-size:13.5px}
+.ver .m{color:var(--mut);font-size:12.5px}
+.ver .a{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+.rq{border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px}
+.rq.done{opacity:.6}
+.rq .h{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--mut)}
+.rq .h b{color:var(--ink)}
+.rq .t{margin:5px 0;white-space:pre-wrap}
+.rq .x{font-size:12.5px;color:var(--mut);border-left:3px solid var(--line);padding-left:7px;margin:5px 0;font-style:italic}
+.rq select{width:100%;margin-top:4px;padding:4px 6px;border-radius:7px;border:1px solid var(--line);background:var(--soft)}
+.tag{font-size:11.5px;border-radius:999px;padding:1px 8px;background:var(--soft);border:1px solid var(--line);white-space:nowrap}
+.hint{font-size:12.5px;color:var(--mut);background:var(--soft);border-radius:8px;padding:8px 10px;margin-bottom:10px}
+table.st{width:100%;border-collapse:collapse;font-size:12.5px}
+table.st th,table.st td{border-bottom:1px solid var(--line);padding:5px 4px;text-align:right}
+table.st th:first-child,table.st td:first-child{text-align:left}
+table.st th{color:var(--mut);font-weight:600;vertical-align:bottom}
+.flt{display:flex;gap:6px;margin-bottom:10px;align-items:center;font-size:12.5px;color:var(--mut)}
+.flt select{padding:3px 6px;border-radius:7px;border:1px solid var(--line);background:var(--soft)}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--card);padding:8px 16px;border-radius:8px;font-size:13px;z-index:9;max-width:90vw}
+.toast.err{background:var(--bad);color:#fff}
+.who{font-size:12.5px;color:var(--mut);display:flex;align-items:center;gap:6px}
+.who select{max-width:170px;padding:3px 6px;border-radius:7px;border:1px solid var(--line);background:var(--soft)}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="ttl"><b id="tNom">Rapport</b><small id="tSub">Sélectionnez un dossier dans le suivi.</small></div>
+  <span class="dirty" id="tDirty" hidden>● Modifications non enregistrées</span>
+  <span class="mode" id="tMode" hidden></span>
+  <button class="btn" id="bTrack" hidden title="Les corrections apparaissent en couleur, avec leur auteur (Suivi des modifications de Writer)">Suivi des modifs</button>
+  <button class="btn" id="bPdf" disabled title="Exporter le rapport affiché en PDF">PDF</button>
+  <button class="btn" id="bOdt" disabled title="Télécharger le rapport affiché en .odt">.odt</button>
+  <button class="btn p" id="bSave" disabled>Enregistrer la version</button>
+  <button class="btn" id="bSide" title="Afficher / masquer le panneau">☰</button>
+</header>
+<div class="bar" id="bar" hidden></div>
+<div class="main">
+  <div class="edz" onselectstart="event.preventDefault()">
+    <canvas id="qtcanvas" contenteditable="true" oncontextmenu="event.preventDefault()" onkeydown="event.preventDefault()"></canvas>
+    <div class="ov" id="ov"><div class="spin"></div><h2>Chargement de l’éditeur…</h2><p>Le premier chargement télécharge LibreOffice (environ 50 Mo). Les suivants sont beaucoup plus rapides.</p></div>
+  </div>
+  <aside class="side" id="side">
+    <nav class="tabs">
+      <button class="tab on" data-t="ver">Versions<span class="n" id="nVer">0</span></button>
+      <button class="tab" data-t="rq">Remarques<span class="n" id="nRq">0</span></button>
+      <button class="tab" data-t="st" id="tabSt" hidden>Erreurs</button>
+    </nav>
+    <div class="pane" id="pane"></div>
+    <div class="who" style="padding:8px 12px;border-top:1px solid var(--line)" id="who"></div>
+  </aside>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+'use strict';
+/* ================= CONFIGURATION ================= */
+const SOFFICE = 'https://cdn.zetaoffice.net/zetaoffice_latest/';   // binaires LibreOffice (WebAssembly)
+const T = { D: 'Dossiers', P: 'Personnel_du_GPREV', I: 'Identite', V: 'Rapports_Versions', R: 'Rapports_Remarques' };
+const TYPES = ['Oubli de réglementation / prescription', 'Erreur de calcul d’effectif', 'Erreur de classement (type, catégorie)', 'Rédaction / mise en forme', 'Autre'];
+// Préfixes reconnus au début d'un commentaire, ex. « [calcul] l'effectif du personnel est faux ».
+const PREFIXES = [[/^\s*\[(presc|prescription|regl|réglementation|reglementation|oubli)\]/i, 0], [/^\s*\[(calcul|effectif)\]/i, 1],
+  [/^\s*\[(classement|categorie|catégorie|type)\]/i, 2], [/^\s*\[(forme|redaction|rédaction)\]/i, 3], [/^\s*\[(autre)\]/i, 4]];
+const ACTIVE = ['En attente agent', 'En cours', 'Attente pièces', 'À reprendre'];
+const LOCKED = ['Retour SAF', 'Clôturé'];
+const OWNER = { id: 0, NOM: 'Propriétaire', Prenom: '', Grade: '', Service: 'Encadrement', Role_hierarchique: 1, isOwner: true };
+
+/* ================= OUTILS ================= */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const svcN = (s) => String(s || '').startsWith('Chargé') ? 'CM' : String(s || '');
+const roleN = (a) => a ? (parseInt(a.Role_hierarchique) || 0) : 0;
+const isGrp = (a) => !!a && (a.isOwner || [1, 2].includes(roleN(a)));
+const isChef = (a) => !!a && roleN(a) == 3 && !a.isOwner;
+const fullName = (p) => p ? `${p.Prenom || ''} ${p.NOM || ''}`.trim() : '';
+const nomDe = (id) => id === 0 ? 'Propriétaire' : (S.pers[id] ? fullName(S.pers[id]) : '—');
+const fdate = (t) => t ? new Date(t * 1000).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+const rowsOf = (t) => { const k = Object.keys(t).filter((x) => x != 'id'); return t.id.map((id, i) => { const o = { id }; k.forEach((c) => o[c] = t[c][i]); return o; }); };
+const refId = (v) => { if (v == null) return 0; if (typeof v == 'number') return v; if (Array.isArray(v) && v[0] == 'R') return +v[2] || 0; if (typeof v == 'object' && 'rowId' in v) return +v.rowId || 0; return +v || 0; };
+const attIds = (v) => Array.isArray(v) ? v.filter((x) => typeof x == 'number') : (typeof v == 'number' ? [v] : []);
+const fname = (s) => String(s || 'rapport').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w\-]+/g, '_').replace(/_+/g, '_').slice(0, 80);
+function toast(m, err) { const t = $('toast'); t.textContent = m; t.className = 'toast' + (err ? ' err' : ''); t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, err ? 6000 : 2200); }
+function typeFromText(txt) { for (const [re, i] of PREFIXES) if (re.test(txt || '')) return TYPES[i]; return ''; }
+
+/* ================= ÉTAT ================= */
+const S = {
+  rec: null, pers: {}, me: null, owner: false, as: 0, ready: false, officeReady: false,
+  versions: [], remarques: [], allRem: [], tab: 'ver',
+  view: null,          // { mode:'edit'|'ro'|'cmp', versionId, compareId }
+  track: false, dirty: false, pendingRec: undefined, busy: false, tablesOk: null, file: null,
+  statPeriode: 'annee',
+};
+function actor() { if (S.owner) return S.as && S.pers[S.as] ? S.pers[S.as] : OWNER; return S.me; }
+function canEdit(r, a) {
+  if (!r || !a) return false;
+  if (LOCKED.includes(r.Statut)) return !!a.isOwner;
+  if (isGrp(a)) return true;
+  if (isChef(a) && r.Service_Attribue && svcN(r.Service_Attribue) == svcN(a.Service)) return true;
+  return refId(r.Agent_Assigne) == a.id && ACTIVE.includes(r.Statut);
+}
+const isRelecteur = (r, a) => !!a && !!r && refId(r.Agent_Assigne) !== a.id;
+const canSeeStats = (a) => isGrp(a) || isChef(a);
+
+/* ================= LIBREOFFICE (ZetaOffice) ================= */
+const canvas = $('qtcanvas');
+const DIR = '/tmp/rapport/';
+let port, reqId = 0; const pending = {};
+var Module = {
+  canvas,
+  uno_scripts: [new URL('zeta.js', location.href).href, new URL('office_thread.js', location.href).href],
+  locateFile: (p, prefix) => (prefix || SOFFICE) + p,
+  mainScriptUrlOrBlob: new Blob(["importScripts('" + SOFFICE + "soffice.js');"], { type: 'text/javascript' }),
+};
+function lo(cmd, extra) {
+  return new Promise((res, rej) => { const id = ++reqId; pending[id] = { res, rej }; port.postMessage({ cmd, id, ...(extra || {}) }); });
+}
+function writeFS(name, bytes) { try { FS.mkdir(DIR); } catch (e) {} FS.writeFile(DIR + name, new Uint8Array(bytes)); return DIR + name; }
+
+function startOffice() {
+  if (!window.crossOriginIsolated) {
+    overlay('<h2>Isolation du navigateur non activée</h2><p>L’éditeur LibreOffice ne peut pas démarrer dans ce navigateur. Utilisez une version récente de <b>Chrome</b> ou <b>Edge</b>, puis rechargez la page.</p><button class="btn" onclick="location.reload()">Recharger</button>');
+    return;
+  }
+  const s = document.createElement('script');
+  s.src = SOFFICE + 'soffice.js';
+  s.onerror = () => overlay('<h2>LibreOffice n’a pas pu être téléchargé</h2><p>Vérifiez l’accès à cdn.zetaoffice.net depuis le réseau du SDIS.</p>');
+  s.onload = () => Module.uno_main.then((p) => {
+    port = p;
+    port.onmessage = (e) => {
+      const d = e.data;
+      if (d.id && pending[d.id]) { const q = pending[d.id]; delete pending[d.id]; d.cmd === 'error' ? q.rej(new Error(d.message)) : q.res(d); return; }
+      if (d.cmd === 'ready') { S.officeReady = true; onOfficeReady(); }
+      else if (d.cmd === 'error') { console.error(d.message); toast('Erreur LibreOffice : ' + d.message, true); }
+    };
+  });
+  document.body.appendChild(s);
+}
+async function onOfficeReady() { await applyUser(); refresh(); }
+async function applyUser() {
+  const a = actor(); if (!S.officeReady || !a) return;
+  try { await lo('user', { prenom: a.Prenom || '', nom: a.NOM || (a.isOwner ? 'Propriétaire' : '') }); } catch (e) { console.warn(e); }
+}
+
+/* ================= GRIST ================= */
+const act = (...a) => grist.docApi.applyUserActions(a);
+let tok = null;
+async function token() {
+  if (tok && Date.now() < tok.exp) return tok;
+  const t = await grist.docApi.getAccessToken({ readOnly: false });
+  tok = { ...t, exp: Date.now() + Math.max(30, (t.ttl || 300) - 60) * 1000 };
+  return tok;
+}
+async function downloadAtt(id) {
+  const t = await token();
+  const r = await fetch(`${t.baseUrl}/attachments/${id}/download?auth=${t.token}`);
+  if (!r.ok) throw new Error('Téléchargement de la pièce jointe impossible (' + r.status + ')');
+  return new Uint8Array(await r.arrayBuffer());
+}
+async function uploadAtt(bytes, name) {
+  const t = await token();
+  const fd = new FormData();
+  fd.append('upload', new Blob([bytes], { type: 'application/vnd.oasis.opendocument.text' }), name);
+  const r = await fetch(`${t.baseUrl}/attachments?auth=${t.token}`, { method: 'POST', body: fd });
+  if (!r.ok) throw new Error('Envoi du fichier refusé par Grist (' + r.status + ')');
+  const ids = await r.json();
+  return ids[0];
+}
+
+async function discover() {
+  try {
+    const tb = rowsOf(await grist.docApi.fetchTable('_grist_Tables')), cl = rowsOf(await grist.docApi.fetchTable('_grist_Tables_column')), tid = {};
+    tb.forEach((t) => tid[t.id] = t.tableId);
+    const ids = tb.map((t) => t.tableId);
+    const a = cl.find((x) => tid[x.parentId] == T.D && x.colId == 'Agent_Assigne');
+    const m = a && /^Ref:(.+)$/.exec(String(a.type)); if (m) T.P = m[1];
+    const fnd = (re) => ids.find((x) => re.test(norm(x)));
+    T.I = fnd(/^identit/) || T.I;
+    S.tablesOk = ids.includes(T.V) && ids.includes(T.R);
+  } catch (e) { console.warn('Métadonnées inaccessibles', e); S.tablesOk = null; }
+}
+async function createTables() {
+  try {
+    const ids = await grist.docApi.listTables();
+    if (!ids.includes(T.V)) await act(['AddTable', T.V, [
+      { id: 'Dossier', type: 'Ref:' + T.D }, { id: 'Numero', type: 'Int' }, { id: 'Etape', type: 'Text' },
+      { id: 'Auteur', type: 'Ref:' + T.P }, { id: 'Date', type: 'DateTime:Europe/Paris' }, { id: 'Fichier', type: 'Attachments' },
+      { id: 'Nb_Commentaires', type: 'Int' }, { id: 'Nb_Modifs_Suivies', type: 'Int' }, { id: 'Note', type: 'Text' }]]);
+    if (!ids.includes(T.R)) await act(['AddTable', T.R, [
+      { id: 'Dossier', type: 'Ref:' + T.D }, { id: 'Version', type: 'Ref:' + T.V }, { id: 'Cle', type: 'Text' },
+      { id: 'Auteur_Texte', type: 'Text' }, { id: 'Relecteur', type: 'Ref:' + T.P }, { id: 'Agent', type: 'Ref:' + T.P },
+      { id: 'Etape', type: 'Text' }, { id: 'Texte', type: 'Text' }, { id: 'Extrait', type: 'Text' },
+      { id: 'Type_Erreur', type: 'Choice', widgetOptions: JSON.stringify({ choices: TYPES }) },
+      { id: 'Etat', type: 'Choice', widgetOptions: JSON.stringify({ choices: ['Ouverte', 'Résolue', 'Supprimée'] }) },
+      { id: 'Date', type: 'DateTime:Europe/Paris' }]]);
+    toast('Tables du rapport créées');
+    await discover(); hideBar(); await loadData(); refresh();
+  } catch (e) { toast('Création refusée : ' + (e.message || e), true); }
+}
+
+async function loadPeople() {
+  const o = {};
+  try { rowsOf(await grist.docApi.fetchTable(T.P)).forEach((p) => o[p.id] = p); } catch (e) { console.error(e); }
+  S.pers = o;
+  let ident = [];
+  try { ident = rowsOf(await grist.docApi.fetchTable(T.I)); } catch (e) {}
+  if (ident.length > 1) { S.owner = true; try { S.as = +localStorage.getItem('rapport_as') || 0; } catch (e) {} }
+  else if (ident.length == 1) S.me = S.pers[refId(ident[0].Personnel)] || null;
+}
+async function loadData() {
+  if (!S.tablesOk) { S.versions = []; S.remarques = []; S.allRem = []; return; }
+  const did = S.rec && S.rec.id;
+  try {
+    S.versions = rowsOf(await grist.docApi.fetchTable(T.V)).filter((v) => refId(v.Dossier) == did).sort((a, b) => (b.Numero || 0) - (a.Numero || 0));
+    S.allRem = rowsOf(await grist.docApi.fetchTable(T.R));
+    S.remarques = S.allRem.filter((r) => refId(r.Dossier) == did).sort((a, b) => (b.Date || 0) - (a.Date || 0));
+  } catch (e) { console.error(e); }
+}
+
+/* ================= AFFICHAGE ================= */
+function overlay(html) { const o = $('ov'); if (html == null) { o.hidden = true; canvas.style.visibility = 'visible'; return; } o.innerHTML = html; o.hidden = false; canvas.style.visibility = 'hidden'; }
+function showBar(html) { const b = $('bar'); b.innerHTML = html; b.hidden = false; resizeSoon(); }
+function hideBar() { $('bar').hidden = true; resizeSoon(); }
+function resizeSoon() { setTimeout(() => window.dispatchEvent(new Event('resize')), 60); }
+function setDirty(v) { S.dirty = v; $('tDirty').hidden = !v; }
+
+function renderHeader() {
+  const r = S.rec;
+  if (!r) { $('tNom').textContent = 'Rapport'; $('tSub').textContent = 'Sélectionnez un dossier dans le suivi.'; $('tMode').hidden = true; }
+  else {
+    $('tNom').textContent = [r.Ville, r.Etablissement].filter(Boolean).join(' – ') || ('Dossier ' + r.id);
+    const lien = r.Lien_Prevarisc ? ` · <a href="${esc(r.Lien_Prevarisc)}" target="_blank" rel="noopener">Prevarisc ↗</a>` : '';
+    $('tSub').innerHTML = esc([r.Numero_Urbanisme, r.Statut, r.Agent_Assigne ? 'Agent : ' + nomDe(refId(r.Agent_Assigne)) : ''].filter(Boolean).join(' · ')) + lien;
+  }
+  const v = S.view, m = $('tMode');
+  if (v) {
+    m.hidden = false;
+    if (v.mode == 'edit') { m.className = 'mode edit'; m.textContent = 'Édition'; }
+    else if (v.mode == 'cmp') { m.className = 'mode cmp'; m.textContent = 'Comparaison'; }
+    else { m.className = 'mode ro'; m.textContent = 'Lecture seule'; }
+  } else m.hidden = true;
+  const editing = v && v.mode == 'edit';
+  $('bSave').disabled = !editing || S.busy;
+  $('bPdf').disabled = !v || S.busy; $('bOdt').disabled = !v || S.busy;
+  $('bTrack').hidden = !editing; $('bTrack').classList.toggle('on', S.track);
+  $('bTrack').textContent = S.track ? 'Suivi des modifs : activé' : 'Suivi des modifs';
+  renderWho();
+}
+function renderWho() {
+  const a = actor(), w = $('who');
+  if (S.owner) {
+    w.innerHTML = 'Vous agissez en tant que <select id="asSel"><option value="0">Propriétaire</option>' +
+      Object.values(S.pers).sort((x, y) => String(x.NOM).localeCompare(String(y.NOM))).map((p) => `<option value="${p.id}" ${p.id == S.as ? 'selected' : ''}>${esc(fullName(p))}</option>`).join('') + '</select>';
+    $('asSel').onchange = async (e) => { S.as = +e.target.value; try { localStorage.setItem('rapport_as', S.as); } catch (er) {} await applyUser(); renderAll(); if (S.rec && !S.dirty) openCurrent(); };
+  } else w.innerHTML = a ? 'Connecté : <b>' + esc(fullName(a)) + '</b>' : '<span style="color:var(--bad)">Identité inconnue (table « Identite »)</span>';
+}
+
+function renderPane() {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.dataset.t == S.tab));
+  $('nVer').textContent = S.versions.length;
+  $('nRq').textContent = S.remarques.filter((r) => r.Etat == 'Ouverte' || !r.Etat).length;
+  $('tabSt').hidden = !canSeeStats(actor());
+  if (S.tab == 'st' && !canSeeStats(actor())) S.tab = 'ver';
+  const p = $('pane');
+  if (!S.rec) { p.innerHTML = '<div class="empty">Aucun dossier sélectionné.</div>'; if (S.tab == 'st') p.innerHTML = renderStats(); return; }
+  if (S.tab == 'ver') p.innerHTML = renderVersions();
+  else if (S.tab == 'rq') p.innerHTML = renderRemarques();
+  else p.innerHTML = renderStats();
+}
+function renderVersions() {
+  if (!S.versions.length) return '<div class="empty">Aucune version enregistrée pour ce dossier.</div>';
+  const cur = S.view && S.view.versionId, last = S.versions[0];
+  return S.versions.map((v, i) => {
+    const prev = S.versions[i + 1];
+    const actuelle = v.id == last.id;
+    return `<div class="ver ${v.id == cur ? 'cur' : ''}">
+      <div class="h"><b>Version ${v.Numero}${actuelle ? ' · actuelle' : ''}</b><span class="tag">${esc(v.Etape || '')}</span></div>
+      <div class="m">${esc(nomDe(refId(v.Auteur)))} · ${fdate(v.Date)}</div>
+      <div class="m">${v.Nb_Commentaires || 0} commentaire(s) · ${v.Nb_Modifs_Suivies || 0} modification(s) suivie(s)${v.Note ? ' · ' + esc(v.Note) : ''}</div>
+      <div class="a">
+        ${actuelle ? `<button class="btn sm" data-a="cur">${S.view && S.view.mode == 'edit' ? 'Affichée' : 'Ouvrir'}</button>` : `<button class="btn sm" data-a="see" data-v="${v.id}">Voir</button>`}
+        ${prev ? `<button class="btn sm" data-a="cmp" data-v="${v.id}" data-p="${prev.id}" title="Montre ce qui a changé entre la version ${prev.Numero} et la version ${v.Numero}">Comparer à v${prev.Numero}</button>` : ''}
+        ${!actuelle ? `<button class="btn sm" data-a="cmp" data-v="${last.id}" data-p="${v.id}" title="Montre ce qui a changé depuis cette version">Comparer à l’actuelle</button>` : ''}
+      </div></div>`;
+  }).join('');
+}
+function renderRemarques() {
+  const a = actor(), chef = canSeeStats(a);
+  const hint = `<div class="hint">Les remarques sont les <b>commentaires Writer</b> (Insert › Comment, ou Ctrl+Alt+C). Elles sont relevées à chaque enregistrement.${chef ? ' Pour typer une erreur directement, commencez le commentaire par <b>[presc]</b>, <b>[calcul]</b>, <b>[classement]</b> ou <b>[forme]</b>, ou choisissez le type ci-dessous.' : ''}</div>`;
+  if (!S.remarques.length) return hint + '<div class="empty">Aucune remarque sur ce dossier.</div>';
+  return hint + S.remarques.map((r) => {
+    const rel = refId(r.Relecteur), ag = refId(r.Agent);
+    const isErr = rel && rel !== ag;
+    const typeSel = chef && isErr ? `<select data-rq="${r.id}"><option value="">— Type d’erreur —</option>${TYPES.map((t) => `<option ${t == r.Type_Erreur ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>` : '';
+    return `<div class="rq ${r.Etat && r.Etat != 'Ouverte' ? 'done' : ''}">
+      <div class="h"><span><b>${esc(r.Auteur_Texte || nomDe(rel))}</b> · ${esc(r.Etape || '')}</span><span>${esc(r.Etat || 'Ouverte')}</span></div>
+      ${r.Extrait ? `<div class="x">« ${esc(r.Extrait)} »</div>` : ''}
+      <div class="t">${esc(r.Texte)}</div>
+      <div class="h"><span>${fdate(r.Date)}</span></div>
+      ${typeSel}</div>`;
+  }).join('');
+}
+function renderStats() {
+  const a = actor();
+  if (!canSeeStats(a)) return '';
+  const now = new Date(), y0 = new Date(now.getFullYear(), 0, 1).getTime() / 1000;
+  const inPer = (t) => S.statPeriode == 'tout' || (t || 0) >= y0;
+  const agents = Object.values(S.pers).filter((p) => isGrp(a) || svcN(p.Service) == svcN(a.Service));
+  const agIds = new Set(agents.map((p) => p.id));
+  const rem = S.allRem.filter((r) => { const rel = refId(r.Relecteur), ag = refId(r.Agent); return rel && ag && rel !== ag && agIds.has(ag) && inPer(r.Date); });
+  const rows = {};
+  rem.forEach((r) => { const ag = refId(r.Agent); const o = rows[ag] || (rows[ag] = { tot: 0, dossiers: new Set(), t: {} }); o.tot++; o.dossiers.add(refId(r.Dossier)); const k = r.Type_Erreur || '(non typée)'; o.t[k] = (o.t[k] || 0) + 1; });
+  const cols = TYPES.concat(['(non typée)']).filter((t) => Object.values(rows).some((o) => o.t[t]));
+  const short = { 'Oubli de réglementation / prescription': 'Oubli régl. / prescr.', 'Erreur de calcul d’effectif': 'Calcul effectif', 'Erreur de classement (type, catégorie)': 'Classement', 'Rédaction / mise en forme': 'Rédaction', 'Autre': 'Autre', '(non typée)': 'Non typée' };
+  const flt = `<div class="flt">Période <select id="statPer"><option value="annee" ${S.statPeriode == 'annee' ? 'selected' : ''}>Année en cours</option><option value="tout" ${S.statPeriode == 'tout' ? 'selected' : ''}>Tout</option></select></div>`;
+  const hint = `<div class="hint">Remarques faites par un relecteur sur le rapport d’un agent${isGrp(a) ? '' : ' de votre service'}. Visible uniquement par les chefs de service et de groupement.</div>`;
+  const ids = Object.keys(rows).map(Number).sort((x, y) => rows[y].tot - rows[x].tot);
+  if (!ids.length) return flt + hint + '<div class="empty">Aucune remarque de relecture sur la période.</div>';
+  const totType = {}; cols.forEach((c) => totType[c] = ids.reduce((s, i) => s + (rows[i].t[c] || 0), 0));
+  return flt + hint + `<table class="st"><thead><tr><th>Agent</th>${cols.map((c) => `<th>${esc(short[c] || c)}</th>`).join('')}<th>Total</th><th>Dossiers</th></tr></thead><tbody>` +
+    ids.map((i) => `<tr><td>${esc(nomDe(i))}</td>${cols.map((c) => `<td>${rows[i].t[c] || ''}</td>`).join('')}<td><b>${rows[i].tot}</b></td><td>${rows[i].dossiers.size}</td></tr>`).join('') +
+    `</tbody><tfoot><tr><th>Total</th>${cols.map((c) => `<th>${totType[c]}</th>`).join('')}<th>${rem.length}</th><th></th></tr></tfoot></table>`;
+}
+function renderAll() { renderHeader(); renderPane(); }
+
+/* ================= OUVERTURE DES DOCUMENTS ================= */
+function versionById(id) { return S.versions.find((v) => v.id == id); }
+async function fileOf(v) {
+  const ids = attIds(v.Fichier); if (!ids.length) throw new Error('La version ' + v.Numero + ' n’a pas de fichier.');
+  const name = 'v' + v.id + '.odt';
+  try { FS.stat(DIR + name); return DIR + name; } catch (e) {}
+  return writeFS(name, await downloadAtt(ids[ids.length - 1]));
+}
+async function openCurrent() {
+  const r = S.rec, a = actor();
+  if (!r) { await lo('close').catch(() => {}); S.view = null; overlay('<h2>Aucun dossier sélectionné</h2><p>Choisissez un dossier dans le widget de suivi : son rapport s’ouvrira ici.</p>'); renderAll(); return; }
+  if (!S.versions.length) {
+    await lo('close').catch(() => {}); S.view = null;
+    const can = canEdit(r, a);
+    overlay(`<h2>Pas encore de rapport pour ce dossier</h2><p>${can ? 'Importez le modèle <b>.odt</b> généré par Prevarisc : il deviendra la version 1 du rapport.' : 'L’agent instructeur n’a pas encore importé de rapport.'}</p>${can ? '<button class="btn p" id="bImport">Importer le modèle .odt…</button>' : ''}`);
+    if (can) $('bImport').onclick = importModele;
+    renderAll(); return;
+  }
+  const last = S.versions[0], edit = canEdit(r, a);
+  await openVersion(last, edit ? 'edit' : 'ro');
+}
+async function openVersion(v, mode, compareTo) {
+  S.busy = true; renderHeader();
+  overlay('<div class="spin"></div><h2>Ouverture du rapport…</h2>');
+  try {
+    const path = await fileOf(v);
+    let editPath = path;
+    if (mode == 'edit') { editPath = writeFS('edition_' + S.rec.id + '.odt', FS.readFile(path)); S.track = isRelecteur(S.rec, actor()); }
+    const cmpPath = compareTo ? await fileOf(compareTo) : null;
+    await lo('open', { path: editPath, readOnly: mode != 'edit', track: mode == 'edit' && S.track, compareWith: cmpPath });
+    S.view = { mode: cmpPath ? 'cmp' : mode, versionId: v.id, compareId: compareTo ? compareTo.id : null };
+    S.file = fname([S.rec.Ville, S.rec.Etablissement].filter(Boolean).join('_')) + '_v' + v.Numero;
+    setDirty(false);
+    overlay(null); resizeSoon();
+    if (mode != 'edit') {
+      const label = cmpPath ? `Comparaison : modifications de la version ${compareTo.Numero} à la version ${v.Numero} (ajouts et suppressions en couleur).` : `Vous consultez la version ${v.Numero} (lecture seule).`;
+      const back = canEdit(S.rec, actor()) ? 'Revenir à la version actuelle (édition)' : 'Revenir à la version actuelle';
+      if (v.id != S.versions[0].id || cmpPath) showBar(esc(label) + ` <button class="btn sm" id="bBack">${back}</button>`), $('bBack').onclick = () => { hideBar(); openCurrent(); };
+      else if (!canEdit(S.rec, actor())) showBar(LOCKED.includes(S.rec.Statut) ? 'Dossier transmis : le rapport n’est plus modifiable.' : 'Lecture seule : ce n’est pas à vous de modifier le rapport à cette étape du workflow.');
+      else hideBar();
+    } else hideBar();
+  } catch (e) {
+    console.error(e); overlay('<h2>Impossible d’ouvrir le rapport</h2><p>' + esc(e.message || e) + '</p>');
+    S.view = null;
+  }
+  S.busy = false; renderAll();
+}
+function importModele() {
+  const i = document.createElement('input'); i.type = 'file'; i.accept = '.odt,application/vnd.oasis.opendocument.text';
+  i.onchange = async () => {
+    const f = i.files[0]; if (!f) return;
+    if (!/\.odt$/i.test(f.name)) { toast('Choisissez un fichier .odt', true); return; }
+    S.busy = true; overlay('<div class="spin"></div><h2>Import du modèle…</h2>');
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      await newVersion(bytes, [], 0, 'Modèle Prevarisc importé');
+      await openCurrent();
+    } catch (e) { console.error(e); toast('Import impossible : ' + (e.message || e), true); S.busy = false; openCurrent(); }
+  };
+  i.click();
+}
+
+/* ================= ENREGISTREMENT ================= */
+async function newVersion(bytes, annots, redlines, note) {
+  const r = S.rec, a = actor();
+  const num = (S.versions[0] ? S.versions[0].Numero || 0 : 0) + 1;
+  const name = fname([r.Ville, r.Etablissement].filter(Boolean).join('_')) + '_v' + num + '.odt';
+  const att = await uploadAtt(bytes, name);
+  const res = await act(['AddRecord', T.V, null, {
+    Dossier: r.id, Numero: num, Etape: r.Statut || '', Auteur: a && a.id ? a.id : 0, Date: Date.now() / 1000,
+    Fichier: ['L', att], Nb_Commentaires: annots.length, Nb_Modifs_Suivies: redlines || 0, Note: note || '' }]);
+  const vid = res && res.retValues ? res.retValues[0] : null;
+  await syncRemarques(annots, vid);
+  await loadData();
+  return vid;
+}
+function matchPerson(name) {
+  const n = norm(name); if (!n) return 0;
+  const p = Object.values(S.pers).find((p) => norm(fullName(p)) == n || norm((p.NOM || '') + (p.Prenom || '')) == n);
+  return p ? p.id : 0;
+}
+async function syncRemarques(annots, vid) {
+  const r = S.rec, a = actor();
+  const existing = {}; S.remarques.forEach((x) => existing[x.Cle] = x);
+  const seen = new Set(), acts = [];
+  const agent = refId(r.Agent_Assigne) || 0;
+  for (const an of annots) {
+    const cle = [norm(an.auteur), an.date || '', norm(an.texte).slice(0, 60)].join('|');
+    seen.add(cle);
+    const etat = an.resolu ? 'Résolue' : 'Ouverte';
+    const ex = existing[cle];
+    if (ex) { if (ex.Etat != etat || ex.Texte != an.texte) acts.push(['UpdateRecord', T.R, ex.id, { Etat: etat, Texte: an.texte }]); continue; }
+    // Auteur du commentaire : la personne nommée dans Writer, sinon celle qui enregistre.
+    const rel = matchPerson(an.auteur) || (a && a.id ? a.id : 0);
+    acts.push(['AddRecord', T.R, null, {
+      Dossier: r.id, Version: vid || 0, Cle: cle, Auteur_Texte: an.auteur, Relecteur: rel, Agent: agent,
+      Etape: r.Statut || '', Texte: an.texte, Extrait: an.extrait, Type_Erreur: typeFromText(an.texte),
+      Etat: etat, Date: an.date ? new Date(an.date).getTime() / 1000 : Date.now() / 1000 }]);
+  }
+  // Commentaires supprimés du document : on les garde dans l'historique (capitalisation), marqués « Supprimée ».
+  S.remarques.forEach((x) => { if (!seen.has(x.Cle) && x.Etat != 'Supprimée') acts.push(['UpdateRecord', T.R, x.id, { Etat: 'Supprimée' }]); });
+  if (acts.length) await grist.docApi.applyUserActions(acts);
+}
+async function save() {
+  if (!S.view || S.view.mode != 'edit' || S.busy) return false;
+  S.busy = true; renderHeader(); $('bSave').textContent = 'Enregistrement…';
+  try {
+    const path = DIR + 'edition_' + S.rec.id + '.odt';
+    const res = await lo('save', { path });
+    const bytes = FS.readFile(path);
+    const vid = await newVersion(bytes, res.annotations || [], res.redlines || 0, '');
+    // la nouvelle version devient le fichier de référence (évite un nouveau téléchargement)
+    try { writeFS('v' + vid + '.odt', bytes); } catch (e) {}
+    S.view.versionId = vid;
+    setDirty(false);
+    toast('Version ' + S.versions[0].Numero + ' enregistrée (' + (S.rec.Statut || '') + ')');
+    S.busy = false; $('bSave').textContent = 'Enregistrer la version'; renderAll();
+    return true;
+  } catch (e) {
+    console.error(e); toast('Enregistrement impossible : ' + (e.message || e), true);
+    S.busy = false; $('bSave').textContent = 'Enregistrer la version'; renderAll();
+    return false;
+  }
+}
+async function exportFile(kind) {
+  if (!S.view) return;
+  try {
+    let bytes, name;
+    if (kind == 'pdf') { const p = DIR + 'export.pdf'; await lo('pdf', { path: p }); bytes = FS.readFile(p); name = S.file + '.pdf'; }
+    else if (S.view.mode == 'edit') { const p = DIR + 'export.odt'; await lo('save', { path: p }); bytes = FS.readFile(p); name = S.file + '.odt'; setDirty(true); }
+    else { bytes = FS.readFile(await fileOf(versionById(S.view.versionId))); name = S.file + '.odt'; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([bytes], { type: kind == 'pdf' ? 'application/pdf' : 'application/vnd.oasis.opendocument.text' }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  } catch (e) { toast('Export impossible : ' + (e.message || e), true); }
+}
+
+/* ================= CHANGEMENT DE DOSSIER ================= */
+async function checkDirty() {
+  if (!S.officeReady || !S.view || S.view.mode != 'edit') return false;
+  try { const r = await lo('modified'); setDirty(r.modified); return r.modified; } catch (e) { return false; }
+}
+setInterval(() => { if (!S.busy) checkDirty(); }, 4000);
+async function onDossier(rec) {
+  const id = rec && rec.id ? rec.id : null;
+  if (S.rec && id === S.rec.id) { S.rec = rec; renderAll(); return; }   // même dossier, champs mis à jour
+  if (await checkDirty()) {
+    S.pendingRec = rec;
+    showBar(`Le rapport de <b>${esc(S.rec.Etablissement || 'ce dossier')}</b> a des modifications non enregistrées.
+      <button class="btn sm p" id="bPS">Enregistrer puis changer</button><button class="btn sm" id="bPD">Abandonner les modifications</button><button class="btn sm" id="bPC">Rester sur ce rapport</button>`);
+    $('bPS').onclick = async () => { if (await save()) switchTo(S.pendingRec); };
+    $('bPD').onclick = () => switchTo(S.pendingRec);
+    $('bPC').onclick = () => { S.pendingRec = undefined; hideBar(); };
+    return;
+  }
+  switchTo(rec);
+}
+async function switchTo(rec) {
+  S.pendingRec = undefined; hideBar(); setDirty(false);
+  S.rec = rec && rec.id ? rec : null;
+  await loadData(); renderAll();
+  if (S.officeReady && S.tablesOk) openCurrent();
+}
+function refresh() {
+  renderAll();
+  if (!S.ready) return;
+  if (S.tablesOk === false) {
+    overlay('<h2>Tables du rapport absentes</h2><p>Le widget a besoin de deux tables : <b>' + T.V + '</b> (versions) et <b>' + T.R + '</b> (remarques).</p><button class="btn p" id="bMk">Créer les tables</button>');
+    $('bMk').onclick = createTables; return;
+  }
+  if (S.officeReady) applyUser().then(openCurrent);
+}
+
+/* ================= ÉVÉNEMENTS ================= */
+$('bSave').onclick = save;
+$('bPdf').onclick = () => exportFile('pdf');
+$('bOdt').onclick = () => exportFile('odt');
+$('bTrack').onclick = async () => { try { const r = await lo('track', { on: !S.track }); S.track = r.on; renderHeader(); } catch (e) { toast(e.message, true); } };
+$('bSide').onclick = () => { $('side').classList.toggle('closed'); resizeSoon(); };
+document.querySelector('.tabs').onclick = (e) => { const t = e.target.closest('.tab'); if (!t) return; S.tab = t.dataset.t; renderPane(); };
+$('pane').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-a]'); if (!b || S.busy) return;
+  if (await checkDirty()) { toast('Enregistrez d’abord vos modifications (ou utilisez « Comparer » après avoir enregistré).', true); return; }
+  const v = versionById(+b.dataset.v);
+  if (b.dataset.a == 'cur') openCurrent();
+  else if (b.dataset.a == 'see') openVersion(v, 'ro');
+  else if (b.dataset.a == 'cmp') openVersion(v, 'ro', versionById(+b.dataset.p));
+});
+$('pane').addEventListener('change', async (e) => {
+  if (e.target.id == 'statPer') { S.statPeriode = e.target.value; renderPane(); return; }
+  const id = +e.target.dataset.rq; if (!id) return;
+  try { await act(['UpdateRecord', T.R, id, { Type_Erreur: e.target.value }]); const r = S.remarques.find((x) => x.id == id); if (r) r.Type_Erreur = e.target.value; const g = S.allRem.find((x) => x.id == id); if (g) g.Type_Erreur = e.target.value; toast('Type enregistré'); }
+  catch (er) { toast('Modification refusée : ' + (er.message || er), true); }
+});
+// Le panneau latéral et les boutons ne doivent pas envoyer les touches à LibreOffice.
+canvas.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
+window.addEventListener('beforeunload', (e) => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+/* ================= DÉMARRAGE ================= */
+grist.ready({ requiredAccess: 'full' });
+let first = true;
+grist.onRecord(async (rec) => {
+  if (first) { first = false; await discover(); await loadPeople(); S.ready = true; S.rec = rec && rec.id ? rec : null; await loadData(); refresh(); return; }
+  onDossier(rec);
+}, { includeColumns: 'all' });
+grist.onRecords(() => {}); // nécessaire pour recevoir les changements de sélection dans certaines versions de Grist
+setTimeout(() => { if (first) { overlay('<h2>Aucun dossier sélectionné</h2><p>Dans Grist, réglez ce widget sur la table <b>Dossiers</b> et choisissez « Sélectionner par » le widget de suivi.</p>'); } }, 8000);
+renderAll();
+startOffice();
+// Recharge régulièrement versions et remarques (travail à plusieurs).
+setInterval(async () => { if (document.hidden || !S.rec || S.busy) return; const n = S.versions.length; await loadData(); if (S.versions.length != n && S.view && S.view.mode != 'edit') toast('Nouvelle version enregistrée par un collègue'); renderPane(); }, 15000);
+</script>
+</body>
+</html>
