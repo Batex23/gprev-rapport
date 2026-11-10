@@ -7,13 +7,16 @@
 <script>
 // LibreOffice a besoin d'une page « isolée ». Sur GitHub Pages, c'est le service worker
 // isolation-sw.js qui ajoute les en-têtes ; au tout premier chargement, on recharge une fois.
+// Un rechargement forcé (Ctrl+F5) contourne le service worker : on recharge alors normalement.
 (function () {
-  if (window.crossOriginIsolated || !('serviceWorker' in navigator)) return;
+  var k = 'rapport-iso-reload';
+  if (window.crossOriginIsolated) { try { sessionStorage.removeItem(k); } catch (e) {} return; }
+  if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.register('isolation-sw.js').then(function () { return navigator.serviceWorker.ready; }).then(function () {
-    var k = 'rapport-iso-reload', n = 0;
+    var n = 0;
     try { n = +sessionStorage.getItem(k) || 0; sessionStorage.setItem(k, n + 1); } catch (e) {}
-    if (n < 2) location.reload();
-  }).catch(function (e) { console.warn('Service worker indisponible', e); });
+    if (n < 3) location.reload();
+  }).catch(function (e) { console.warn('Service worker indisponible', e); window.__swErr = String(e && e.message || e); });
 })();
 </script>
 <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
@@ -197,7 +200,11 @@ function writeFS(name, bytes) { try { FS.mkdir(DIR); } catch (e) {} FS.writeFile
 
 function startOffice() {
   if (!window.crossOriginIsolated) {
-    overlay('<h2>Isolation du navigateur non activée</h2><p>L’éditeur LibreOffice ne peut pas démarrer dans ce navigateur. Utilisez une version récente de <b>Chrome</b> ou <b>Edge</b>, puis rechargez la page.</p><button class="btn" onclick="location.reload()">Recharger</button>');
+    const v = (navigator.userAgent.match(/(Chrome|Edg|Firefox)\/(\d+)/) || []).slice(1).join(' ') || navigator.userAgent;
+    const sw = !('serviceWorker' in navigator) ? 'non disponible' : (window.__swErr ? 'erreur : ' + window.__swErr : (navigator.serviceWorker.controller ? 'actif' : 'pas encore actif'));
+    overlay('<h2>Isolation du navigateur non activée</h2><p>L’éditeur LibreOffice ne peut pas encore démarrer. Cliquez sur <b>Réessayer</b> (n’utilisez pas Ctrl+F5).</p><button class="btn p" id="bRetry">Réessayer</button>' +
+      '<p style="font-size:12px">Diagnostic : navigateur ' + esc(v) + ' · service worker ' + esc(sw) + '. Chrome ou Edge version 137 ou plus est nécessaire.</p>');
+    $('bRetry').onclick = () => { try { sessionStorage.removeItem('rapport-iso-reload'); } catch (e) {} location.reload(); };
     return;
   }
   const s = document.createElement('script');
@@ -604,7 +611,13 @@ window.addEventListener('beforeunload', (e) => { if (S.dirty) { e.preventDefault
 grist.ready({ requiredAccess: 'full' });
 // Identité et tables chargées dès l'ouverture, sans attendre qu'un dossier soit sélectionné.
 let firstRec;           // dossier reçu avant la fin de l'initialisation
-const init = (async () => { await discover(); await loadPeople(); S.ready = true; S.rec = firstRec && firstRec.id ? firstRec : null; await loadData(); refresh(); })();
+const init = (async () => {
+  try { await grist.docApi.listTables(); }
+  catch (e) {
+    showBar('Le widget n’a pas encore accès au document. Dans le panneau de droite de Grist, onglet de la vue, réglez <b>Accès</b> sur <b>Accès complet</b> (ou cliquez sur « Accepter » si Grist le propose), puis rechargez.');
+    $('who').innerHTML = '<span style="color:var(--bad)">Accès au document refusé</span>';
+  }
+  await discover(); await loadPeople(); S.ready = true; S.rec = firstRec && firstRec.id ? firstRec : null; await loadData(); refresh(); })();
 grist.onRecord(async (rec) => {
   if (!S.ready) { firstRec = rec; await init; return; }
   onDossier(rec);
