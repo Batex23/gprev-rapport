@@ -44,8 +44,8 @@ function open(d) {
   }
   // Les modèles Prevarisc masquent les modifications suivies (ShowRedlineChanges=false) : on les affiche.
   try { disp.executeDispatch(frame, '.uno:ShowTrackedChanges', '', 0, [prop('ShowTrackedChanges', true)]); } catch (e) {}
-  try { xModel.setModified(false); } catch (e) {}
   if (!d.readOnly && d.track) xModel.setPropertyValue('RecordChanges', true);
+  try { xModel.setModified(false); } catch (e) {}
 }
 
 // Liste des commentaires (notes de marge) présents dans le document.

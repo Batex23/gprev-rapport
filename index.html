@@ -14,9 +14,12 @@
 var PARAMS = new URLSearchParams(location.search);
 var TAB = PARAMS.get('onglet');
 (function () {
-  var k = 'rapport-iso-reload';
+  // Compteur propre à chaque onglet (un onglet ouvert depuis la vue hérite de son sessionStorage).
+  var k = 'rapport-iso-reload-' + (TAB || 'vue');
   if (window.crossOriginIsolated) { try { sessionStorage.removeItem(k); } catch (e) {} return; }
   if (!('serviceWorker' in navigator)) return;
+  // Firefox ne sait pas isoler une page dans un cadre : inutile de recharger la vue Grist.
+  if (!TAB && /Firefox\//.test(navigator.userAgent)) { navigator.serviceWorker.register('isolation-sw.js').catch(function () {}); return; }
   navigator.serviceWorker.register('isolation-sw.js').then(function () { return navigator.serviceWorker.ready; }).then(function () {
     var n = 0;
     try { n = +sessionStorage.getItem(k) || 0; sessionStorage.setItem(k, n + 1); } catch (e) {}
@@ -145,76 +148,143 @@ table.st th{color:var(--mut);font-weight:600;vertical-align:bottom}
 <script>
 'use strict';
 /* ================= RELAIS VUE GRIST ⇄ ONGLET ================= */
-// Chrome / Edge : l'onglet garde le lien avec la vue (window.opener) et lui envoie ses demandes.
-// Firefox : l'onglet est isolé et perd ce lien ; on passe par un BroadcastChannel (même site github.io).
-const CHAN = (sess) => 'gprev-rapport-' + sess;
+// L'éditeur s'ouvre dans un onglet. Deux façons de joindre Grist :
+//  - Chrome / Edge : l'onglet garde le lien avec la vue (window.opener) ; la vue exécute ses demandes.
+//  - Firefox : l'onglet doit s'isoler (COOP), ce qui coupe ce lien. Il utilise alors l'API REST de Grist
+//    avec un jeton temporaire. La vue renouvelle ce jeton toutes les 3 minutes et le dépose, chiffré,
+//    dans la table Rapports_Sessions ; la clé de chiffrement n'existe que dans l'adresse de l'onglet.
+const b64u = { enc: (u) => btoa(String.fromCharCode(...u)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  dec: (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)) };
+async function aesKey(raw) { return crypto.subtle.importKey('raw', b64u.dec(raw), 'AES-GCM', false, ['encrypt', 'decrypt']); }
+async function seal(raw, obj) { const iv = crypto.getRandomValues(new Uint8Array(12)); const c = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(raw), new TextEncoder().encode(JSON.stringify(obj)))); const o = new Uint8Array(12 + c.length); o.set(iv); o.set(c, 12); return b64u.enc(o); }
+async function unseal(raw, s) { const u = b64u.dec(s); return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: u.slice(0, 12) }, await aesKey(raw), u.slice(12)))); }
+const SESS_TABLE = 'Rapports_Sessions';
+
 if (TAB) {
-  const chan = ('BroadcastChannel' in window) ? new BroadcastChannel(CHAN(TAB)) : null;
-  const pend = {}; let n = 0, recCb = null, gotRec = false, lastSeen = 0;
-  const send = (m) => {
-    m.t = TAB;
-    try { if (window.opener && !window.opener.closed) window.opener.postMessage(m, location.origin); } catch (e) {}
-    if (chan) chan.postMessage(m);
-  };
-  const recv = (d) => {
-    if (!d || d.t !== TAB || d.fromTab) return;
-    lastSeen = Date.now();
+  const H = new URLSearchParams(location.hash.slice(1));
+  const R = { base: H.get('b'), tok: H.get('j'), key: H.get('k'), d: +H.get('d') || 0, sealed: '' };
+  if (H.get('as') != null) window.__asFromView = +H.get('as') || 0;
+  // Le jeton n'a pas à rester visible dans la barre d'adresse (une fois la page isolée, l'adresse ne change plus).
+  if (window.crossOriginIsolated && location.hash) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+  let recCb = null, gotRec = false;
+  const viaOpener = () => { try { return !!window.opener && !window.opener.closed && !!window.opener.postMessage; } catch (e) { return false; } };
+
+  /* --- mode Chrome / Edge : relais par la vue --- */
+  const pend = {}; let n = 0;
+  window.addEventListener('message', (e) => {
+    const d = e.data; if (e.origin !== location.origin || !d || d.t !== TAB || d.fromTab) return;
     if (d.ev === 'record') { gotRec = true; if (d.as != null) window.__asFromView = d.as; if (recCb) recCb(d.rec); return; }
-    if (d.ev === 'closing') { window.__viewGone = true; return; }
     if (d.id && pend[d.id]) { const q = pend[d.id]; delete pend[d.id]; d.ok ? q.res(d.r) : q.rej(new Error(d.err)); }
-  };
-  window.addEventListener('message', (e) => { if (e.origin === location.origin) recv(e.data); });
-  if (chan) chan.onmessage = (e) => recv(e.data);
+  });
   const rpc = (m, a) => new Promise((res, rej) => {
-    const id = 'r' + (++n); pend[id] = { res, rej }; send({ fromTab: 1, id, m, a });
+    const id = 'r' + (++n); pend[id] = { res, rej };
+    try { window.opener.postMessage({ t: TAB, fromTab: 1, id, m, a }, location.origin); } catch (e) { delete pend[id]; return rej(new Error('Lien avec Grist perdu. Rouvrez le rapport depuis Grist.')); }
     setTimeout(() => { if (pend[id]) { delete pend[id]; rej(new Error('Pas de réponse de Grist. Gardez l’onglet Grist ouvert, ou rouvrez le rapport depuis Grist.')); } }, 60000);
   });
+
+  /* --- mode Firefox : API REST de Grist --- */
+  async function rest(path, opts) {
+    if (!R.base || !R.tok) throw new Error('Adresse incomplète : rouvrez le rapport depuis Grist.');
+    const u = R.base + path + (path.includes('?') ? '&' : '?') + 'auth=' + encodeURIComponent(R.tok);
+    let r;
+    try { r = await fetch(u, opts); } catch (e) { throw new Error('Grist injoignable depuis cet onglet (' + (e.message || e) + ').'); }
+    if (r.status === 401 || r.status === 403) throw new Error('Autorisation expirée ou refusée par Grist (' + r.status + '). Gardez l’onglet Grist ouvert, puis rouvrez le rapport.');
+    if (!r.ok) throw new Error('Grist a refusé la requête (' + r.status + ').');
+    return r.json();
+  }
+  const toCols = (recs) => { const o = { id: [] }, ks = new Set(); recs.forEach((r) => Object.keys(r.fields || {}).forEach((k) => ks.add(k))); ks.forEach((k) => o[k] = []);
+    recs.forEach((r) => { o.id.push(r.id); ks.forEach((k) => o[k].push(r.fields[k] === undefined ? null : r.fields[k])); }); return o; };
+  const q = (o) => encodeURIComponent(JSON.stringify(o));
+  const restApi = {
+    fetchTable: async (t) => toCols((await rest('/tables/' + encodeURIComponent(t) + '/records')).records || []),
+    listTables: async () => ((await rest('/tables')).tables || []).map((t) => t.id),
+    applyUserActions: async (actions) => rest('/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(actions) }),
+    getAccessToken: async () => ({ token: R.tok, baseUrl: R.base, ttlMsecs: 120000 }),
+  };
+  async function recordById(id) {
+    if (!id) return null;
+    const j = await rest('/tables/' + encodeURIComponent(T.D) + '/records?filter=' + q({ id: [id] }));
+    const r = (j.records || [])[0]; return r ? { id: r.id, ...r.fields } : null;
+  }
+  // Suit la session déposée par la vue : jeton renouvelé et dossier sélectionné.
+  async function pollSession() {
+    if (viaOpener()) return;
+    try {
+      const j = await rest('/tables/' + SESS_TABLE + '/records?filter=' + q({ Session: [TAB] }));
+      const f = ((j.records || [])[0] || {}).fields; if (!f) return;
+      if (f.Donnees && f.Donnees !== R.sealed) { try { const o = await unseal(R.key, f.Donnees); R.tok = o.t; R.sealed = f.Donnees; tok = null; } catch (e) { console.warn('jeton illisible', e); } }
+      const age = Date.now() / 1000 - (f.Date || 0);
+      if (age > 420) showBar('L’onglet Grist semble fermé : gardez-le ouvert, sinon l’enregistrement ne sera bientôt plus possible.');
+      else if ($('bar').textContent.includes('semble fermé')) hideBar();
+      if (f.Dossier && f.Dossier !== R.d) { R.d = f.Dossier; const rec = await recordById(R.d); if (rec && recCb) recCb(rec); }
+    } catch (e) { console.warn('session', e); if (/expirée|refusée/.test(e.message)) showBar(esc(e.message)); }
+  }
+
+  const pick = (m) => (...a) => viaOpener() ? rpc(m, a) : restApi[m](...a);
   window.grist = {
     ready() {}, onRecords() {},
     onRecord(cb) {
       recCb = cb;
-      const hello = () => { if (gotRec) return; send({ fromTab: 1, hello: 1 }); setTimeout(hello, 1000); };
-      hello();
-      setTimeout(() => { if (!gotRec) showBar('Cet onglet n’arrive pas à joindre Grist. Fermez-le et rouvrez le rapport depuis la vue Rapport de Grist.'); }, 12000);
+      if (viaOpener()) {
+        const hello = () => { if (gotRec || !viaOpener()) return; try { window.opener.postMessage({ t: TAB, fromTab: 1, hello: 1 }, location.origin); } catch (e) {} setTimeout(hello, 1000); };
+        hello();
+      } else {
+        recordById(R.d).then((rec) => { gotRec = true; cb(rec); })
+          .catch((e) => { showBar('Cet onglet n’arrive pas à joindre Grist : ' + esc(e.message)); cb(null); });
+        setInterval(pollSession, 5000);
+      }
     },
-    docApi: {
-      fetchTable: (...a) => rpc('fetchTable', a), listTables: (...a) => rpc('listTables', a),
-      applyUserActions: (...a) => rpc('applyUserActions', a), getAccessToken: (...a) => rpc('getAccessToken', a),
-    },
+    docApi: { fetchTable: pick('fetchTable'), listTables: pick('listTables'), applyUserActions: pick('applyUserActions'), getAccessToken: pick('getAccessToken') },
   };
 }
-// Côté vue (dans Grist) : ouvre l'onglet et exécute ses demandes avec la vraie API Grist.
-const TABLINK = { win: null, sess: null, chan: null, reply: null };
+
+// Côté vue (dans Grist) : ouvre l'onglet, exécute ses demandes (Chrome / Edge) et tient la session à jour (Firefox).
+const TABLINK = { win: null, sess: null, key: null, reply: null, rowId: null, timer: null };
 function tabAlive() { return !!TABLINK.sess && (Date.now() - (TABLINK.seen || 0) < 30000); }
 async function onTabMsg(d, reply) {
   if (!d || !d.fromTab || d.t !== TABLINK.sess) return;
   TABLINK.reply = reply; TABLINK.seen = Date.now();
   if (d.hello) { reply({ t: TABLINK.sess, ev: 'record', rec: S.rec, as: S.as }); renderLauncher(); return; }
-  if (d.ping) { reply({ t: TABLINK.sess, pong: 1 }); return; }
   if (!d.m) return;
   try { const r = await grist.docApi[d.m](...(d.a || [])); reply({ t: TABLINK.sess, id: d.id, ok: true, r }); }
   catch (e) { reply({ t: TABLINK.sess, id: d.id, ok: false, err: String((e && e.message) || e) }); }
 }
+async function ensureSessTable() {
+  const ids = await grist.docApi.listTables();
+  if (!ids.includes(SESS_TABLE)) await act(['AddTable', SESS_TABLE, [{ id: 'Session', type: 'Text' }, { id: 'Dossier', type: 'Int' }, { id: 'As', type: 'Int' }, { id: 'Donnees', type: 'Text' }, { id: 'Date', type: 'Numeric' }]]);
+}
+// Écrit (ou met à jour) la ligne de session : jeton chiffré, dossier sélectionné, heure.
+async function pushSession(withToken) {
+  if (!TABLINK.sess || !TABLINK.key) return;
+  const f = { Session: TABLINK.sess, Dossier: S.rec ? S.rec.id : 0, As: S.as || 0, Date: Date.now() / 1000 };
+  if (withToken) { const t = await grist.docApi.getAccessToken({ readOnly: false }); TABLINK.base = t.baseUrl; TABLINK.tok = t.token; f.Donnees = await seal(TABLINK.key, { t: t.token }); }
+  if (TABLINK.rowId) await act(['UpdateRecord', SESS_TABLE, TABLINK.rowId, f]);
+  else { const r = await act(['AddRecord', SESS_TABLE, null, f]); TABLINK.rowId = r && r.retValues ? r.retValues[0] : null; }
+}
 function openTab() {
   if (TABLINK.win && !TABLINK.win.closed && tabAlive()) { try { TABLINK.win.focus(); } catch (e) {} sendRecordToTab(); return; }
-  const sess = Math.random().toString(36).slice(2, 10);
-  TABLINK.sess = sess; TABLINK.seen = Date.now();
-  const url = new URL('index.html', location.href); url.searchParams.set('onglet', sess);
-  TABLINK.win = window.open(url.href, 'gprev-rapport');
-  if (!TABLINK.win) { toast('Le navigateur a bloqué l’ouverture de l’onglet : autorisez les fenêtres surgissantes pour Grist.', true); return; }
-  const mkChan = () => {
-    if (!('BroadcastChannel' in window)) return;
-    try { if (TABLINK.chan) TABLINK.chan.close(); } catch (e) {}
-    TABLINK.chan = new BroadcastChannel(CHAN(sess));
-    TABLINK.chan.onmessage = (e) => onTabMsg(e.data, (m) => TABLINK.chan.postMessage(m));
-  };
-  // Firefox cloisonne le stockage des cadres : on demande l'accès au stockage du site pour joindre l'onglet.
-  if (/Firefox\//.test(navigator.userAgent) && document.requestStorageAccess) {
-    document.requestStorageAccess().then(mkChan, () => { mkChan(); toast('Firefox a refusé l’accès : l’onglet risque de ne pas joindre Grist.', true); });
-  } else mkChan();
+  // On ouvre l'onglet tout de suite (sinon le navigateur bloque la fenêtre), puis on lui donne son adresse.
+  const w = window.open('', 'gprev-rapport');
+  if (!w) { toast('Le navigateur a bloqué l’ouverture de l’onglet : autorisez les fenêtres surgissantes (pop-ups) pour Grist.', true); return; }
+  try { w.document.title = 'Rapport GPREV'; w.document.body.innerHTML = '<p style="font:16px system-ui;padding:40px">Ouverture du rapport…</p>'; } catch (e) {}
+  TABLINK.win = w; TABLINK.sess = Math.random().toString(36).slice(2, 10); TABLINK.seen = Date.now(); TABLINK.rowId = null;
+  TABLINK.key = b64u.enc(crypto.getRandomValues(new Uint8Array(32)));
+  (async () => {
+    try { await ensureSessTable(); await pushSession(true); }
+    catch (e) { console.warn('Session non enregistrée (utile seulement pour Firefox)', e);
+      try { const t = await grist.docApi.getAccessToken({ readOnly: false }); TABLINK.base = t.baseUrl; TABLINK.tok = t.token; } catch (e2) {} }
+    const url = new URL('index.html', location.href); url.searchParams.set('onglet', TABLINK.sess);
+    url.hash = new URLSearchParams({ b: TABLINK.base || '', j: TABLINK.tok || '', k: TABLINK.key, d: S.rec ? S.rec.id : 0, as: S.as || 0 }).toString();
+    w.location.href = url.href;
+    clearInterval(TABLINK.timer);
+    TABLINK.timer = setInterval(() => pushSession(true).catch((e) => console.warn('renouvellement', e)), 180000);
+  })();
   renderLauncher();
 }
-function sendRecordToTab() { if (TABLINK.reply && tabAlive()) TABLINK.reply({ t: TABLINK.sess, ev: 'record', rec: S.rec, as: S.as }); }
+function sendRecordToTab() {
+  if (TABLINK.reply && tabAlive()) TABLINK.reply({ t: TABLINK.sess, ev: 'record', rec: S.rec, as: S.as });
+  if (TABLINK.rowId) pushSession(false).catch(() => {});
+}
 if (!TAB) window.addEventListener('message', (e) => {
   if (e.origin !== location.origin || !TABLINK.win || e.source !== TABLINK.win) return;
   onTabMsg(e.data, (m) => { try { TABLINK.win.postMessage(m, location.origin); } catch (er) {} });
@@ -365,7 +435,10 @@ async function discover() {
     const fnd = (re) => ids.find((x) => re.test(norm(x)));
     T.I = fnd(/^identit/) || T.I;
     S.tablesOk = ids.includes(T.V) && ids.includes(T.R) && ids.includes(T.F);
-  } catch (e) { console.warn('Métadonnées inaccessibles', e); S.tablesOk = null; }
+  } catch (e) {
+    console.warn('Métadonnées inaccessibles', e); S.tablesOk = null;
+    try { const ids = await grist.docApi.listTables(); S.tablesOk = ids.includes(T.V) && ids.includes(T.R) && ids.includes(T.F); T.I = ids.find((x) => /^identit/.test(norm(x))) || T.I; } catch (e2) {}
+  }
 }
 async function createTables() {
   try {
