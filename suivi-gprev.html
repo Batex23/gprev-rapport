@@ -551,8 +551,8 @@ function renderDetailNow(){
       ${r.Numero_AIRS?`<span class="mini">AIRS ${esc(r.Numero_AIRS)}</span>`:''}
       ${r.Agent_Assigne&&S.pers[r.Agent_Assigne]?`<span class="chip" title="Agent en charge">${avatar(S.pers[r.Agent_Assigne])}${esc(fullName(S.pers[r.Agent_Assigne]))}</span>`:`<span class="mini">${r.Service_Attribue?'Chez le chef de service '+esc(r.Service_Attribue)+', pas encore d’agent':'Pas encore attribué'}</span>`}
       ${r.Lien_Prevarisc?`<a href="${esc(r.Lien_Prevarisc)}" target="_blank" rel="noopener">Ouvrir dans Prevarisc</a>`:''}</div>
-     <div class="row" style="margin-top:8px"><button class="btn p" data-rap="${r.id}">Ouvrir le rapport ↗</button>
-      <span class="mini">${S.repV[r.id]?'Rapport : version '+S.repV[r.id]:'Pas encore de rapport (il sera joint à l’envoi en relecture)'}</span></div></div>
+     ${S.repV[r.id]?`<div class="row" style="margin-top:8px"><button class="btn p" data-rap="${r.id}">Ouvrir le rapport ↗</button>
+      <span class="mini">Rapport : version ${S.repV[r.id]}</span></div>`:''}</div>
      <div class="cd ${cd[0]}"><div><b>${cd[1]}</b><small>${cd[2]}</small></div></div></div>
      <div class="track">${track}</div></div>
    <div class="box"><h3>Informations (modifiables, partagées en direct)</h3><div class="grid">${FIELDS.map(f=>fieldHtml(f,r)).join('')}
@@ -659,15 +659,8 @@ async function tlSession(withTok){if(!TL.sess)return;
   if(withTok){const t=await grist.docApi.getAccessToken({readOnly:false});TL.base=t.baseUrl;TL.tok=t.token;f.Donnees=await seal(TL.key,{t:t.token})}
   if(TL.rowId)await act(['UpdateRecord',SESS_TABLE,TL.rowId,f]);else{const x=await act(['AddRecord',SESS_TABLE,null,f]);TL.rowId=x&&x.retValues?x.retValues[0]:null}}
 function openRapport(id){
-  if(!S.repV[id]){
-    /* pas encore de rapport : on l'importe d'abord */
-    const r=S.recs.find(x=>x.id==id),inp=document.createElement('input');inp.type='file';inp.accept='.odt,application/vnd.oasis.opendocument.text';
-    inp.onchange=async()=>{const fl=inp.files[0];if(!fl)return;if(!/\.odt$/i.test(fl.name))return toast('Choisissez un fichier .odt',true);
-      try{await importRapport(r,new Uint8Array(await fl.arrayBuffer()));renderDetailNow();
-        openM(`<h2>Rapport importé</h2><p>Le fichier est devenu la version 1 du rapport.</p><div class="mact"><button class="btn" id="ro_n">Fermer</button><button class="btn p" id="ro_y">Ouvrir le rapport ↗</button></div>`,'sm');
-        $('ro_n').onclick=closeM;$('ro_y').onclick=()=>{closeM();openRapport(id)}}
-      catch(e){toast('Import impossible : '+(e.message||e),true)}};
-    toast('Ce dossier n’a pas encore de rapport : choisissez le fichier .odt');inp.click();return}
+  /* le rapport est joint par l'instructeur à l'envoi en relecture : avant, pas de rapport à ouvrir */
+  if(!S.repV[id])return toast('Le rapport sera disponible quand l’instructeur aura envoyé le dossier en relecture.',true);
   openTabFor(id,false)}
 function openTabFor(id,forceNew){
   TL.rid=id;
@@ -705,7 +698,7 @@ function finish(id){const av=$('avS').value;if(!av)return toast('Choisissez un a
   /* l'instructeur joint son rapport .odt ; s'il l'a rédigé dans l'éditeur, il peut transmettre la version déjà enregistrée */
   loadRep().then(()=>{const n=S.repV[id]||0;
   openM(`<h2>Rapport à transmettre</h2><p>${g?'Le dossier part en relecture chez le <b>chef de groupement</b>.':'Le dossier part en relecture chez le <b>chef de service</b>.'}</p>
-    <p>${n?`La <b>version ${n}</b> du rapport est déjà dans Grist. Joignez votre fichier si vous avez travaillé dans OpenOffice.`:'Joignez le rapport <b>.odt</b> que vous avez rédigé : il deviendra la version 1.'}</p>
+    <p>${n?`La <b>version ${n}</b> du rapport est déjà dans Grist. Joignez votre fichier si vous avez travaillé dans OpenOffice.`:'Joignez le rapport <b>.odt</b> que vous avez rédigé : il deviendra la version 1 et sera visible des relecteurs.'}</p>
     <div class="mact"><button class="btn" id="rt_n">Annuler</button>${n?`<button class="btn" id="rt_keep">Transmettre la version ${n}</button>`:''}<button class="btn p" id="rt_file">Joindre le rapport .odt…</button></div>`,'sm');
   $('rt_n').onclick=closeM;$('rt_file').onclick=pickOdt;if(n)$('rt_keep').onclick=()=>{closeM();go()}})}
 async function back(id,grp){
