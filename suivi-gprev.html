@@ -550,7 +550,9 @@ function renderDetailNow(){
       ${r.Nb_Derogations?`<span class="mini hot">${r.Nb_Derogations} dérogation${r.Nb_Derogations>1?'s':''}</span>`:''}${r.Nb_Demandes_Avis?`<span class="mini hot">${r.Nb_Demandes_Avis} demande${r.Nb_Demandes_Avis>1?'s':''} d’avis</span>`:''}
       ${r.Numero_AIRS?`<span class="mini">AIRS ${esc(r.Numero_AIRS)}</span>`:''}
       ${r.Agent_Assigne&&S.pers[r.Agent_Assigne]?`<span class="chip" title="Agent en charge">${avatar(S.pers[r.Agent_Assigne])}${esc(fullName(S.pers[r.Agent_Assigne]))}</span>`:`<span class="mini">${r.Service_Attribue?'Chez le chef de service '+esc(r.Service_Attribue)+', pas encore d’agent':'Pas encore attribué'}</span>`}
-      ${r.Lien_Prevarisc?`<a href="${esc(r.Lien_Prevarisc)}" target="_blank" rel="noopener">Ouvrir dans Prevarisc</a>`:''}</div></div>
+      ${r.Lien_Prevarisc?`<a href="${esc(r.Lien_Prevarisc)}" target="_blank" rel="noopener">Ouvrir dans Prevarisc</a>`:''}</div>
+     <div class="row" style="margin-top:8px"><button class="btn p" data-rap="${r.id}">Ouvrir le rapport ↗</button>
+      <span class="mini">${S.repV[r.id]?'Rapport : version '+S.repV[r.id]:'Pas encore de rapport (il sera joint à l’envoi en relecture)'}</span></div></div>
      <div class="cd ${cd[0]}"><div><b>${cd[1]}</b><small>${cd[2]}</small></div></div></div>
      <div class="track">${track}</div></div>
    <div class="box"><h3>Informations (modifiables, partagées en direct)</h3><div class="grid">${FIELDS.map(f=>fieldHtml(f,r)).join('')}
@@ -629,25 +631,83 @@ async function repTables(){const ids=await grist.docApi.listTables();
   if(!ids.includes(RT.V))await act(['AddTable',RT.V,[{id:'Dossier',type:'Ref:'+T.D},{id:'Numero',type:'Int'},{id:'Etape',type:'Text'},{id:'Auteur',type:'Ref:'+T.P},{id:'Date',type:'DateTime:Europe/Paris'},{id:'Nb_Commentaires',type:'Int'},{id:'Nb_Modifs_Suivies',type:'Int'},{id:'Note',type:'Text'}]]);
   if(!ids.includes(RT.R))await act(['AddTable',RT.R,[{id:'Dossier',type:'Ref:'+T.D},{id:'Version',type:'Ref:'+RT.V},{id:'Cle',type:'Text'},{id:'Auteur_Texte',type:'Text'},{id:'Relecteur',type:'Ref:'+T.P},{id:'Agent',type:'Ref:'+T.P},{id:'Etape',type:'Text'},{id:'Texte',type:'Text'},{id:'Extrait',type:'Text'},{id:'Type_Erreur',type:'Choice',widgetOptions:JSON.stringify({choices:RTYPES})},{id:'Etat',type:'Choice',widgetOptions:JSON.stringify({choices:['Ouverte','Résolue','Supprimée']})},{id:'Date',type:'DateTime:Europe/Paris'}]]);
   if(!ids.includes(RT.F)){await act(['AddTable',RT.F,[{id:'Version',type:'Ref:'+RT.V},{id:'Dossier',type:'Ref:'+T.D},{id:'Contenu',type:'Text'},{id:'Taille',type:'Int'}]]);
-    try{const tb=rowsOf(await grist.docApi.fetchTable('_grist_Tables')).find(t=>t.tableId==RT.F);if(tb)await act(['UpdateRecord','_grist_Tables',tb.id,{onDemand:true}])}catch(e){}}}
+    try{const tb=rowsOf(await grist.docApi.fetchTable('_grist_Tables')).find(t=>t.tableId==RT.F);if(tb)await act(['UpdateRecord','_grist_Tables',tb.id,{onDemand:true}])}catch(e){}}
+  if(!ids.includes(SESS_TABLE))await act(['AddTable',SESS_TABLE,[{id:'Session',type:'Text'},{id:'Dossier',type:'Int'},{id:'As',type:'Int'},{id:'Donnees',type:'Text'},{id:'Date',type:'Numeric'}]])}
 async function importRapport(r,bytes){await repTables();await loadRep();const a=actor(),num=(S.repV[r.id]||0)+1;
   const res=await act(['AddRecord',RT.V,null,{Dossier:r.id,Numero:num,Etape:r.Statut||'',Auteur:a&&a.id?a.id:0,Date:Date.now()/1000,Nb_Commentaires:0,Nb_Modifs_Suivies:0,Note:'Rapport joint à l’envoi en relecture'}]);
   const vid=res&&res.retValues?res.retValues[0]:null;
   await act(['AddRecord',RT.F,null,{Version:vid,Dossier:r.id,Contenu:b64(bytes),Taille:bytes.length}]);S.repV[r.id]=num}
+/* ============ ÉDITEUR DE RAPPORT (onglet plein écran) ============ */
+const EDITEUR=window.__EDITEUR||'https://batex23.github.io/gprev-rapport/index.html';
+const SESS_TABLE='Rapports_Sessions';
+const b64u={enc:u=>btoa(String.fromCharCode(...u)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''),dec:x=>Uint8Array.from(atob(x.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0))};
+async function seal(raw,obj){const k=await crypto.subtle.importKey('raw',b64u.dec(raw),'AES-GCM',false,['encrypt']);const iv=crypto.getRandomValues(new Uint8Array(12));
+  const c=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},k,new TextEncoder().encode(JSON.stringify(obj))));const o=new Uint8Array(12+c.length);o.set(iv);o.set(c,12);return b64u.enc(o)}
+const TL={win:null,sess:null,key:null,rowId:null,timer:null,rid:null,seen:0};
+const tlAlive=()=>!!TL.sess&&Date.now()-TL.seen<30000&&TL.win&&!TL.win.closed;
+const tlRec=()=>S.recs.find(x=>x.id==TL.rid)||null;
+function tlSend(m){try{TL.win.postMessage(Object.assign({t:TL.sess},m),'*')}catch(e){}}
+/* Chrome / Edge : l'onglet envoie ses demandes ici, on les exécute avec l'API Grist */
+window.addEventListener('message',async e=>{const d=e.data;
+  if(!TL.win||e.source!==TL.win||!d||!d.fromTab||d.t!==TL.sess)return;TL.seen=Date.now();
+  if(d.hello)return tlSend({ev:'record',rec:tlRec(),as:(actor()||{}).id||0});
+  if(!d.m||!['fetchTable','listTables','applyUserActions','getAccessToken'].includes(d.m))return;
+  try{const r=await grist.docApi[d.m](...(d.a||[]));tlSend({id:d.id,ok:true,r})}catch(er){tlSend({id:d.id,ok:false,err:String(er&&er.message||er)})}});
+/* Firefox : l'onglet passe par l'API REST ; on lui dépose un jeton renouvelé et chiffré */
+async function tlSession(withTok){if(!TL.sess)return;
+  const f={Session:TL.sess,Dossier:TL.rid||0,As:(actor()||{}).id||0,Date:Date.now()/1000};
+  if(withTok){const t=await grist.docApi.getAccessToken({readOnly:false});TL.base=t.baseUrl;TL.tok=t.token;f.Donnees=await seal(TL.key,{t:t.token})}
+  if(TL.rowId)await act(['UpdateRecord',SESS_TABLE,TL.rowId,f]);else{const x=await act(['AddRecord',SESS_TABLE,null,f]);TL.rowId=x&&x.retValues?x.retValues[0]:null}}
+function openRapport(id){
+  if(!S.repV[id]){
+    /* pas encore de rapport : on l'importe d'abord */
+    const r=S.recs.find(x=>x.id==id),inp=document.createElement('input');inp.type='file';inp.accept='.odt,application/vnd.oasis.opendocument.text';
+    inp.onchange=async()=>{const fl=inp.files[0];if(!fl)return;if(!/\.odt$/i.test(fl.name))return toast('Choisissez un fichier .odt',true);
+      try{await importRapport(r,new Uint8Array(await fl.arrayBuffer()));renderDetailNow();
+        openM(`<h2>Rapport importé</h2><p>Le fichier est devenu la version 1 du rapport.</p><div class="mact"><button class="btn" id="ro_n">Fermer</button><button class="btn p" id="ro_y">Ouvrir le rapport ↗</button></div>`,'sm');
+        $('ro_n').onclick=closeM;$('ro_y').onclick=()=>{closeM();openRapport(id)}}
+      catch(e){toast('Import impossible : '+(e.message||e),true)}};
+    toast('Ce dossier n’a pas encore de rapport : choisissez le fichier .odt');inp.click();return}
+  openTabFor(id,false)}
+function openTabFor(id,forceNew){
+  TL.rid=id;
+  if(!forceNew&&TL.sess&&TL.win&&!TL.win.closed){tlSend({ev:'record',rec:tlRec(),as:(actor()||{}).id||0});tlSession(false).catch(()=>{});try{TL.win.focus()}catch(e){}return}
+  /* Firefox : l'onglet déjà ouvert n'est plus joignable directement ; il lit le dossier dans la session */
+  if(!forceNew&&TL.sess&&TL.rowId&&/Firefox\//.test(navigator.userAgent)){
+    tlSession(false).catch(()=>{});
+    const r=tlRec();
+    openM(`<h2>Rapport</h2><p>L’onglet <b>Rapport GPREV</b> déjà ouvert passe sur <b>${esc(r?(r.Nom_Dossier||nomDossier(r)):'ce dossier')}</b> dans quelques secondes.</p><p>Si vous l’avez fermé, ouvrez-en un nouveau.</p><div class="mact"><button class="btn" id="ro_n">Fermer</button><button class="btn p" id="ro_new">Ouvrir un nouvel onglet ↗</button></div>`,'sm');
+    $('ro_n').onclick=closeM;$('ro_new').onclick=()=>{closeM();openTabFor(id,true)};return}
+  const w=window.open('',forceNew?'_blank':'gprev-rapport');
+  if(!w)return toast('Le navigateur a bloqué l’onglet : autorisez les fenêtres pop-up pour Grist, puis recliquez.',true);
+  try{w.document.title='Rapport GPREV';w.document.body.innerHTML='<p style="font:16px system-ui;padding:40px">Ouverture du rapport…</p>'}catch(e){}
+  TL.win=w;TL.sess=Math.random().toString(36).slice(2,10);TL.seen=Date.now();TL.rowId=null;TL.key=b64u.enc(crypto.getRandomValues(new Uint8Array(32)));
+  (async()=>{
+    try{await repTables();await tlSession(true)}
+    catch(e){console.warn('Session non enregistrée (utile pour Firefox)',e);try{const t=await grist.docApi.getAccessToken({readOnly:false});TL.base=t.baseUrl;TL.tok=t.token}catch(e2){}}
+    const u=new URL(EDITEUR);u.searchParams.set('onglet',TL.sess);
+    u.hash=new URLSearchParams({b:TL.base||'',j:TL.tok||'',k:TL.key,d:id,as:(actor()||{}).id||0}).toString();
+    try{w.location.href=u.href}catch(e){window.open(u.href,'gprev-rapport')}
+    clearInterval(TL.timer);TL.timer=setInterval(()=>tlSession(true).catch(e=>console.warn('renouvellement',e)),180000)})()}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-rap]');if(b){e.preventDefault();openRapport(+b.dataset.rap)}});
+
 function finish(id){const av=$('avS').value;if(!av)return toast('Choisissez un avis (favorable ou défavorable)',true);
   if(!$('resS').checked)return toast('Confirmez que les pièces sont sur le réseau',true);
   const r=S.recs.find(x=>x.id==id),g=r&&r.Retour_Groupement;
   const go=()=>{const f={Avis:av,Pieces_Reseau:true,Date_Termine_Agent:todayU(),Statut:g?'Relecture chef de groupement':'Relecture chef de service'};
     if(r&&'Retour_Groupement' in r)f.Retour_Groupement=false;
     upd(id,f,g?'Renvoyé au chef de groupement':'Envoyé en relecture')};
-  if(S.repV[id])return go();   // le rapport est déjà dans la vue Rapport : rien à importer
-  /* pas encore de rapport : l'agent joint son .odt, qui devient la version 1 */
-  const inp=document.createElement('input');inp.type='file';inp.accept='.odt,application/vnd.oasis.opendocument.text';
-  inp.onchange=async()=>{const fl=inp.files[0];if(!fl)return;
-    if(!/\.odt$/i.test(fl.name))return toast('Choisissez le rapport au format .odt',true);
-    try{toast('Import du rapport…');await importRapport(r,new Uint8Array(await fl.arrayBuffer()));go()}
-    catch(e){console.error(e);toast('Import du rapport impossible : '+(e.message||e),true)}};
-  toast('Choisissez le rapport .odt à envoyer en relecture');inp.click()}
+  const pickOdt=()=>{const inp=document.createElement('input');inp.type='file';inp.accept='.odt,application/vnd.oasis.opendocument.text';
+    inp.onchange=async()=>{const fl=inp.files[0];if(!fl)return;
+      if(!/\.odt$/i.test(fl.name))return toast('Choisissez le rapport au format .odt',true);
+      try{toast('Import du rapport…');await importRapport(r,new Uint8Array(await fl.arrayBuffer()));closeM();go()}
+      catch(e){console.error(e);toast('Import du rapport impossible : '+(e.message||e),true)}};inp.click()};
+  /* l'instructeur joint son rapport .odt ; s'il l'a rédigé dans l'éditeur, il peut transmettre la version déjà enregistrée */
+  loadRep().then(()=>{const n=S.repV[id]||0;
+  openM(`<h2>Rapport à transmettre</h2><p>${g?'Le dossier part en relecture chez le <b>chef de groupement</b>.':'Le dossier part en relecture chez le <b>chef de service</b>.'}</p>
+    <p>${n?`La <b>version ${n}</b> du rapport est déjà dans Grist. Joignez votre fichier si vous avez travaillé dans OpenOffice.`:'Joignez le rapport <b>.odt</b> que vous avez rédigé : il deviendra la version 1.'}</p>
+    <div class="mact"><button class="btn" id="rt_n">Annuler</button>${n?`<button class="btn" id="rt_keep">Transmettre la version ${n}</button>`:''}<button class="btn p" id="rt_file">Joindre le rapport .odt…</button></div>`,'sm');
+  $('rt_n').onclick=closeM;$('rt_file').onclick=pickOdt;if(n)$('rt_keep').onclick=()=>{closeM();go()}})}
 async function back(id,grp){
   const t=await ask({title:'Renvoyer à l’agent',label:'Motif du renvoi (obligatoire, visible par l’agent)',ok:'Renvoyer',area:true});if(!t)return;
   try{await addComRaw(id,'Renvoi à l’agent : '+t,true);

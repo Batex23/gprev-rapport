@@ -25,7 +25,8 @@ var TAB = PARAMS.get('onglet');
     try { n = +sessionStorage.getItem(k) || 0; sessionStorage.setItem(k, n + 1); } catch (e) {}
     if (n >= 4) return;
     // Firefox (onglet) : l'isolation demande en plus l'en-tête COOP, ajouté quand l'adresse contient coop=1.
-    if (TAB && navigator.serviceWorker.controller && !PARAMS.has('coop')) { PARAMS.set('coop', '1'); location.replace(location.pathname + '?' + PARAMS + location.hash); return; }
+    // (seulement après un premier rechargement sous service worker : Chrome / Edge s'isolent sans COOP et gardent le lien avec Grist)
+    if (TAB && n >= 1 && navigator.serviceWorker.controller && !PARAMS.has('coop')) { PARAMS.set('coop', '1'); location.replace(location.pathname + '?' + PARAMS + location.hash); return; }
     location.reload();
   }).catch(function (e) { console.warn('Service worker indisponible', e); window.__swErr = String(e && e.message || e); });
 })();
@@ -172,13 +173,14 @@ if (TAB) {
   /* --- mode Chrome / Edge : relais par la vue --- */
   const pend = {}; let n = 0;
   window.addEventListener('message', (e) => {
-    const d = e.data; if (e.origin !== location.origin || !d || d.t !== TAB || d.fromTab) return;
+    // La vue qui a ouvert l'onglet peut être la vue Rapport ou le widget de suivi (autre adresse) : on vérifie la session.
+    const d = e.data; if (e.source !== window.opener || !d || d.t !== TAB || d.fromTab) return;
     if (d.ev === 'record') { gotRec = true; if (d.as != null) window.__asFromView = d.as; if (recCb) recCb(d.rec); return; }
     if (d.id && pend[d.id]) { const q = pend[d.id]; delete pend[d.id]; d.ok ? q.res(d.r) : q.rej(new Error(d.err)); }
   });
   const rpc = (m, a) => new Promise((res, rej) => {
     const id = 'r' + (++n); pend[id] = { res, rej };
-    try { window.opener.postMessage({ t: TAB, fromTab: 1, id, m, a }, location.origin); } catch (e) { delete pend[id]; return rej(new Error('Lien avec Grist perdu. Rouvrez le rapport depuis Grist.')); }
+    try { window.opener.postMessage({ t: TAB, fromTab: 1, id, m, a }, '*'); } catch (e) { delete pend[id]; return rej(new Error('Lien avec Grist perdu. Rouvrez le rapport depuis Grist.')); }
     setTimeout(() => { if (pend[id]) { delete pend[id]; rej(new Error('Pas de réponse de Grist. Gardez l’onglet Grist ouvert, ou rouvrez le rapport depuis Grist.')); } }, 60000);
   });
 
@@ -226,7 +228,7 @@ if (TAB) {
     onRecord(cb) {
       recCb = cb;
       if (viaOpener()) {
-        const hello = () => { if (gotRec || !viaOpener()) return; try { window.opener.postMessage({ t: TAB, fromTab: 1, hello: 1 }, location.origin); } catch (e) {} setTimeout(hello, 1000); };
+        const hello = () => { if (gotRec || !viaOpener()) return; try { window.opener.postMessage({ t: TAB, fromTab: 1, hello: 1 }, '*'); } catch (e) {} setTimeout(hello, 1000); };
         hello();
       } else {
         recordById(R.d).then((rec) => { gotRec = true; cb(rec); })
